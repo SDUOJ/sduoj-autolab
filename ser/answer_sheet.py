@@ -25,6 +25,7 @@ class programSubmitType(BaseModel):
 class checkpointListType(BaseModel):
     checkpointId: str
     status: Optional[int]
+    node: Optional[str]
 
 
 class publicCheckPointType(BaseModel):
