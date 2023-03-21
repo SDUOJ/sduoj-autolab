@@ -170,7 +170,9 @@ async def ser_problem_set_with_data(data: routerType,
 async def pbcp_deal(data):
     from model.answer_sheet import answerSheetModel
     db = answerSheetModel()
-    para = data.dict()
+    para = {}
+    if data.data is not None:
+        para = data.data.dict()
     _, para["problemId"] = await db.get_gid_pid_by_psid_gi_pi_cache(
         data.router.psid, data.router.gid, data.router.pid
     )

@@ -285,7 +285,7 @@ async def get_pbCheckPoint(req_data):
 async def del_pbCheckPoint(req_data):
     data: dict = await make_post(
         "problem-service",
-        "/internal/problem/updateCheckpoints",
+        "/internal/problem/deleteCheckpoints",
         data=req_data,
         params={"userId": req_data["userId"]}
     )
@@ -295,7 +295,7 @@ async def del_pbCheckPoint(req_data):
 async def upd_pbCheckPoint(req_data):
     data: dict = await make_post(
         "problem-service",
-        "/internal/problem/appendCheckpoints",
+        "/internal/problem/updateCheckpoints",
         data=req_data,
         params={"userId": req_data["userId"]}
     )
