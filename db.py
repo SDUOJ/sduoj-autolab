@@ -266,6 +266,52 @@ class SignInUser(Base):
     # 可以上传请假条
     file_id = Column(INTEGER, nullable=True)
 
+#签到表
+class OjSign(Base):
+    __tablename__ = "oj_sign"
+    sg_id = Column(INTEGER, primary_key=True)
+    # 签到模式
+    mode = Column(INTEGER, nullable=False)
+    # 用户组id
+    group_id = Column(INTEGER, nullable=False)
+    # 管理组id
+    m_group_id = Column(INTEGER, nullable=False)
+    # 创造时间
+    u_gmt_create =  Column(DATETIME, nullable=False, server_default=func.now())
+    # 修改时间
+    u_gmt_modified = Column(DATETIME, nullable=False)
+    # 签到标签
+    title = Column(VARCHAR(63), nullable=False)
+    # 开始时间
+    start_time = Column(DATETIME, nullable=False, server_default=func.now())
+    # 结束时间
+    end_time = Column(DATETIME, nullable=False, server_default=func.now())
+    # 是否指定座位
+    # 1 绑定  0 未绑定
+    seat_bind = Column(INTEGER, nullable=False)
+    # 名单id
+    usl_id = Column(INTEGER, nullable=False)
+
+# 用户签到表
+class OjSignUser(Base):
+    __tablename__ = "oj_sign_user"
+    # 学生签到id
+    sg_u_id = Column(INTEGER, primary_key=True)
+    # 座位号
+    seat_id = Column(INTEGER, primary_key=True)
+    # 学生用户名
+    username = Column(INTEGER, nullable=False)
+    # 签到id
+    sg_id = Column(INTEGER, ForeignKey("oj_sign.sg_id"), nullable=False,index=True)
+    # 签到时间
+    sg_time = Column(DATETIME, nullable=False)
+    # 签到唯一凭证
+    token = Column(VARCHAR(63), nullable=False)
+    # 请假信息
+    sg_user_message = Column(LONGTEXT, nullable=True)
+    # 是否通过审批
+    # 1 通过  0 未通过  none 审批中
+    sg_absence_pass = Column(INTEGER, nullable=True)
 
 from const import Mysql_addr, Mysql_user, Mysql_pass, Mysql_db
 
