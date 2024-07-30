@@ -349,6 +349,31 @@ class ojClassManageUser(Base):
     c_id = Column(INTEGER, ForeignKey("oj_class.c_id"), nullable=False)
 
 
+class ScreenRecord(Base):
+    __tablename__ = "screen_record"
+
+    # 视频id
+    v_id = Column(INTEGER, primary_key=True, nullable=False, autoincrement=True)
+
+    # 业务类型 业务ID
+    bs_type = Column(INTEGER, nullable=False)
+    bs_id = Column(INTEGER, nullable=False)
+
+    # 视频存储路径
+    v_path = Column(VARCHAR(200), nullable=False)
+
+    # 用户id
+    u_id = Column(INTEGER, nullable=False)
+
+    # 视频唯一凭证
+    token = Column(VARCHAR(50), nullable=False, unique=True)  # 假设token应该是唯一的
+
+    # 创建时间 最后修改时间
+    start_time = Column(DATETIME, nullable=False)
+    modify_time = Column(DATETIME, nullable=False)
+
+    # bs_id = Column(INTEGER, ForeignKey('business.id'), nullable=False)
+    # u_id = Column(INTEGER, ForeignKey('user.id'), nullable=False)
 
 
 from const import Mysql_addr, Mysql_user, Mysql_pass, Mysql_db
