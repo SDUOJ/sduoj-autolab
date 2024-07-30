@@ -350,6 +350,7 @@ class ojClassManageUser(Base):
 
 
 class ScreenRecord(Base):
+    # 录屏表，用于记录录屏信息
     __tablename__ = "screen_record"
 
     # 视频id
