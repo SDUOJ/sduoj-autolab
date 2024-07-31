@@ -7,7 +7,7 @@ from sqlalchemy import Column, ForeignKey, Index, UniqueConstraint
 from sqlalchemy import create_engine
 from sqlalchemy import func
 from sqlalchemy.dialects.mysql import INTEGER, VARCHAR, DATETIME, LONGTEXT, \
-    FLOAT
+    FLOAT, BIGINT, TINYINT
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -267,52 +267,115 @@ class SignInUser(Base):
     file_id = Column(INTEGER, nullable=True)
 
 
-class OjSign(Base):
-    __tablename__ = "oj_sign"
-    sg_id = Column(INTEGER, primary_key=True, autoincrement=True, comment="签到id")
-    # 签到模式
-    mode = Column(INTEGER, nullable=False,comment="签到模式")
-    # 用户组id
-    group_id = Column(INTEGER, nullable=False,comment="用户组Id")
-    # 管理组id
-    m_group_id = Column(INTEGER, nullable=False,comment="管理组id")
-    # 创造时间
-    u_gmt_create =  Column(DATETIME, nullable=False, server_default=func.now(),comment="创建时间")
-    # 修改时间
-    u_gmt_modified = Column(DATETIME, nullable=False,comment="最后修改时间")
-    # 签到标签
-    title = Column(VARCHAR(63), nullable=False,comment="签到标签")
-    # 开始时间
-    start_time = Column(DATETIME, nullable=False,comment="签到开始时间")
-    # 结束时间
-    end_time = Column(DATETIME, nullable=False,comment="签到结束时间")
-    # 是否指定座位
-    # 1 绑定  0 未绑定
-    seat_bind = Column(INTEGER, nullable=False,comment="是否绑定座位：1 绑定  0 未绑定")
-    # 名单id
-    usl_id = Column(INTEGER, nullable=False,comment="名单id")
+class ojClass(Base):
+    # 教室信息表：用于记录所有的教室信息
+    __tablename__ = 'oj_class'
+
+    # 教室id
+    c_id = Column(INTEGER, primary_key=True, nullable=False, unique=True, index=True, autoincrement=True)
+
+    # 教室名
+    c_name = Column(VARCHAR(50), nullable=False, unique=True, index=True)
+
+    # 座位数量
+    c_seat_num = Column(INTEGER, nullable=False)
+
+    # 教室描述
+    c_description=Column(LONGTEXT,nullable=False)
 
 
-# 用户签到表
-class OjSignUser(Base):
-    __tablename__ = "oj_sign_user"
-    # 学生签到id
-    sg_u_id = Column(INTEGER, primary_key=True, autoincrement=True, comment="学生签到id")
+class ojSeat(Base):
+    # 座位信息表：用于记录所有的座位信息
+    __tablename__ = 'oj_seat'
+
+    # 座位id，唯一标识
+    s_id = Column(BIGINT, primary_key=True, nullable=False, unique=True, index=True)
+
     # 座位号
-    seat_id = Column(INTEGER, unique=True, nullable=False, comment="座位号")
-    # 学生用户名
-    username = Column(VARCHAR(63), unique=True, nullable=False, comment="学生用户名")
-    # 签到id
-    sg_id = Column(INTEGER, ForeignKey("oj_sign.sg_id"), nullable=False,index=True,comment="签到id")
-    # 签到时间
-    sg_time = Column(DATETIME, nullable=False,comment="签到时间")
-    # 签到唯一凭证
-    token = Column(VARCHAR(63), nullable=False, unique=True, comment="签到唯一凭证")
-    # 请假信息
-    sg_user_message = Column(LONGTEXT, nullable=True,comment="请假信息")
-    # 是否通过审批
-    # 1 通过  0 未通过  none 审批中
-    sg_absence_pass = Column(INTEGER, nullable=True,comment="审批信息：1 通过  0 未通过  none 审批中")
+    s_number = Column(TINYINT, nullable=False)
+
+    # 所属教室id(外键)
+    c_id = Column(INTEGER, ForeignKey("oj_class.c_id"), nullable=False, index=True)
+
+    # 座位标签(如正常，损坏等)
+    s_tag = Column(TINYINT, nullable=False)
+
+    # 座位ip
+    s_ip = Column(VARCHAR(20), unique=True)
+
+
+class ojUserSeatList(Base):
+    # 学生座位名单表，绑定学生与座位
+    __tablename__ = 'oj_user_seat_list'
+
+    # 学生座位名单id
+    usl_id = Column(BIGINT, primary_key=True, nullable=False, unique=True, index=True)
+
+    # 名单名称
+    name = Column(VARCHAR(50), nullable=False, unique=True, index=True)
+
+    # 绑定组信息
+    groupId = Column(BIGINT, nullable=False)
+
+
+class ojClassUser(Base):
+    # 教室座位绑定表，用于记录教室用户的绑定信息
+    __tablename__ = 'oj_class_user'
+
+    # id,主键
+    id = Column(BIGINT, primary_key=True, nullable=False, unique=True, index=True)
+
+    # usl_id,外键
+    usl_id = Column(BIGINT, ForeignKey("oj_user_seat_list.usl_id"), nullable=False)
+
+    # 用户名(学号)
+    username = Column(BIGINT, nullable=False, unique=True, index=True)
+
+    # 座位id,外键,唯一标识
+    s_id = Column(BIGINT,ForeignKey("oj_seat.s_id"), nullable=False, unique=True)
+
+
+class ojClassManageUser(Base):
+    # 教室助教绑定表，用于记录教室助教的绑定信息
+    __tablename__ = 'oj_class_manage_user'
+
+    # 助教姓名,主键
+    TA_name = Column(VARCHAR(20), primary_key=True, nullable=False)
+
+    # 学生座位名单id,外键
+    usl_id = Column(BIGINT, ForeignKey("oj_user_seat_list.usl_id"), nullable=False)
+
+    # 教室id,外键
+    c_id = Column(INTEGER, ForeignKey("oj_class.c_id"), nullable=False)
+
+
+class ScreenRecord(Base):
+    # 录屏表，用于记录录屏信息
+    __tablename__ = "screen_record"
+
+    # 视频id
+    v_id = Column(INTEGER, primary_key=True, nullable=False, autoincrement=True)
+
+    # 业务类型 业务ID
+    bs_type = Column(INTEGER, nullable=False)
+    bs_id = Column(INTEGER, nullable=False)
+
+    # 视频存储路径
+    v_path = Column(VARCHAR(200), nullable=False)
+
+    # 用户id
+    u_id = Column(INTEGER, nullable=False)
+
+    # 视频唯一凭证
+    token = Column(VARCHAR(50), nullable=False, unique=True)  # 假设token应该是唯一的
+
+    # 创建时间 最后修改时间
+    start_time = Column(DATETIME, nullable=False)
+    modify_time = Column(DATETIME, nullable=False)
+
+    # bs_id = Column(INTEGER, ForeignKey('business.id'), nullable=False)
+    # u_id = Column(INTEGER, ForeignKey('user.id'), nullable=False)
+
 
 from const import Mysql_addr, Mysql_user, Mysql_pass, Mysql_db
 
