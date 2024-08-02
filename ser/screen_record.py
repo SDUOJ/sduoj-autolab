@@ -13,6 +13,7 @@ class newRecord(BaseModel):
 class newFrame(BaseModel):
     token: str
     pic: bytes
+
 class getVideoList(BaseModel):
     u_id: int
     bs_type: int
