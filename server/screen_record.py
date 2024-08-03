@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Form, File, UploadFile
-from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, VideoClip
+from fastapi import APIRouter, Form, File, UploadFile, HTTPException
+from fastapi.responses import FileResponse
+from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
 from model.screen_record import screenRecordModel
 from utils import makeResponse
 from datetime import datetime
-from ser.screen_record import newRecord, newFrame
+from ser.screen_record import newRecord, newFrame, videoList, videoInfo
 import os
 
 router = APIRouter(
@@ -11,6 +12,13 @@ router = APIRouter(
 )
 @router.post("/addRecord")
 async def addRecord(data: newRecord):
+    db = screenRecordModel()
+
+    result = db.get_path_by_token(data.token)
+    if result is not None:
+        print("视频已存在")
+        raise HTTPException(status_code=200, detail="record already exist")
+
     datas = {
         'bs_type': data.bs_type,
         'bs_id': data.bs_id,
@@ -22,7 +30,7 @@ async def addRecord(data: newRecord):
     }
     db = screenRecordModel()
     db.add_record(datas)
-    return makeResponse("create")
+    raise HTTPException(status_code=200, detail="record added successfully")
 
 
 @router.post("/addFrame")
@@ -32,7 +40,7 @@ async def addFrame(token: str = Form(...), pic: UploadFile = File(...)):
     result = db.get_path_by_token(token)
     if result is None:
         print("无匹配token")
-        return {"message": "need create"}
+        raise HTTPException(status_code=200, detail="no such record")
 
     path = result.v_path
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -49,7 +57,7 @@ async def addFrame(token: str = Form(...), pic: UploadFile = File(...)):
         db.add_frame_by_token(token, {'modify_time': datetime.now()})
         if os.path.exists(image_path):
             os.remove(image_path)
-        return {"message": "视频文件创建成功"}
+        raise HTTPException(status_code=200, detail="video created successfully")
 
     # 保存上传的图片文件到本地
     image_path = os.path.join(os.path.dirname(path), f"{os.path.basename(path).rsplit('.', 1)[0]}_{int(datetime.now().timestamp())}.png")
@@ -75,4 +83,44 @@ async def addFrame(token: str = Form(...), pic: UploadFile = File(...)):
         os.remove(image_path)
 
     print(f"成功")
-    return {"message": "视频追加成功"}
+    raise HTTPException(status_code=200, detail="frame added successfully")
+
+@router.get("/getVideoList")
+async def getVideoList(datas: videoList):
+    data = datas.dict()
+    db = screenRecordModel()
+    result = db.get_video_list(data)
+    if not result:
+        raise HTTPException(status_code=404, detail="no such record")
+
+    video_list = [
+        {
+            "token": video.token,
+            "start_time": video.start_time.strftime("%Y-%m-%d %H:%M:%S") if video.start_time else None,
+            "modify_time": video.modify_time.strftime("%Y-%m-%d %H:%M:%S") if video.modify_time else None,
+        }
+        for video in result
+    ]
+    return video_list
+
+@router.post("/getVideo")
+async def getVideo(token: str = Form(...)):
+    db = screenRecordModel()
+    path = db.get_path_by_token(token).v_path
+
+    # 检查文件是否存在
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Video not found")
+    # 返回视频文件
+    return FileResponse(path, media_type='video/mp4', filename=os.path.basename(path))
+
+@router.post("/deleteVideo")
+async def deleteVideo(token: str = Form(...)):
+    db = screenRecordModel()
+    path = db.get_path_by_token(token).v_path
+
+    db.delete_by_token(token)
+    # 检查文件是否存在
+    if os.path.isfile(path):
+        os.remove(path)
+    raise HTTPException(status_code=200, detail="video deleted")

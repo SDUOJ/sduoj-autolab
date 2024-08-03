@@ -23,3 +23,19 @@ class screenRecordModel(dbSession, baseModel, listQuery, baseQuery):
             ScreenRecord.token == token
         ).update(datetime_)
         self.session.commit()
+
+    # 查询视频列表
+    def get_video_list(self, data: dict):
+        result = self.session.query(ScreenRecord).filter(
+            ScreenRecord.bs_type == data["bs_type"],
+            ScreenRecord.bs_id == data["bs_id"],
+            ScreenRecord.u_id == data["u_id"],
+        ).all()
+        return result
+
+    def delete_by_token(self, token: str):
+        result = self.session.query(ScreenRecord).filter(ScreenRecord.token == token).first()
+        if result:
+            # 删除数据库中的记录
+            self.session.delete(result)
+            self.session.commit()
