@@ -1,11 +1,15 @@
+import os
+from datetime import datetime
+from io import BytesIO
+
+import numpy
+from PIL import Image
 from fastapi import APIRouter, Form, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
+
 from model.screen_record import screenRecordModel
-from utils import makeResponse
-from datetime import datetime
-from ser.screen_record import newRecord, newFrame, videoList, videoInfo
-import os
+from ser.screen_record import newRecord, videoList
 
 router = APIRouter(
     prefix="/screen_record"
@@ -39,48 +43,37 @@ async def addFrame(token: str = Form(...), pic: UploadFile = File(...)):
 
     result = db.get_path_by_token(token)
     if result is None:
-        print("无匹配token")
-        raise HTTPException(status_code=200, detail="no such record")
+        raise HTTPException(status_code=404, detail="no such record")
 
     path = result.v_path
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
     # 检查视频文件是否存在
     if not os.path.isfile(path):
-        print(f"视频文件不存在，正在创建一个新的视频文件: {path}")
         # 创建一个包含图片的短视频文件
-        image_path = os.path.join(os.path.dirname(path), f"{os.path.basename(path).rsplit('.', 1)[0]}_overlay.png")
-        with open(image_path, "wb+") as buffer:
-            buffer.write(await pic.read())
-        clip = ImageClip(image_path, duration=1)  # 设置视频持续时间
-        clip.write_videofile(path, fps=1, codec='libx264', audio=False)
+        image_bytes = await pic.read()
+        image = Image.open(BytesIO(image_bytes))
+        image.save(path, format='GIF', save_all=True, duration=1000, loop=0)
         db.add_frame_by_token(token, {'modify_time': datetime.now()})
-        if os.path.exists(image_path):
-            os.remove(image_path)
-        raise HTTPException(status_code=200, detail="video created successfully")
-
-    # 保存上传的图片文件到本地
-    image_path = os.path.join(os.path.dirname(path), f"{os.path.basename(path).rsplit('.', 1)[0]}_{int(datetime.now().timestamp())}.png")
-    with open(image_path, "wb+") as buffer:
-        buffer.write(await pic.read())
+        raise HTTPException(status_code=201, detail="video created successfully")
 
     # 读取视频文件
     video_clip = VideoFileClip(path)
-    # 将图片转换为clip
-    image_clip = ImageClip(image_path, duration=1)  # 设置图片在视频中的持续时间
+    # 将上传的图片转换为PIL Image对象
+    image_bytes = await pic.read()
+    image = Image.open(BytesIO(image_bytes))
+    # 将PIL Image对象转换为numpy数组
+    image_array = numpy.array(image)
+    # 使用numpy数组创建ImageClip
+    image_clip = ImageClip(image_array, duration=1)
     # 设置图片的位置
     image_clip = image_clip.set_position(('center', 'center'))
     # 合成视频和图片
     final_clip = CompositeVideoClip([video_clip, image_clip.set_start(video_clip.duration)])
     # 将合成视频保存到新文件
     final_clip.write_videofile(path, codec='libx264', audio_codec=False, fps=video_clip.fps)
-
     # 更新最后确认时间到数据库
     db.add_frame_by_token(token, {'modify_time': datetime.now()})
-
-    # 删除下载的图片文件
-    if os.path.exists(image_path):
-        os.remove(image_path)
 
     print(f"成功")
     raise HTTPException(status_code=200, detail="frame added successfully")
