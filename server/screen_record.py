@@ -1,12 +1,13 @@
 import os
 from datetime import datetime
 from io import BytesIO
+import shutil
 
 import numpy
 from PIL import Image
 from fastapi import APIRouter, Form, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
-from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
+from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, ImageSequenceClip
 
 from model.screen_record import screenRecordModel
 from ser.screen_record import newRecord, videoList
@@ -26,11 +27,12 @@ async def addRecord(data: newRecord):
     datas = {
         'bs_type': data.bs_type,
         'bs_id': data.bs_id,
-        'v_path': "D:\\SDUOJ\\ScreenRecord\\" + data.u_name + "_" + str(datetime.now().strftime("%Y%m%d")) + ".mp4",
+        'v_path': "D:\\SDUOJ\\ScreenRecord\\" + data.u_name + "_" + str(datetime.now().strftime("%Y%m%d")) + "\\",
         'u_id': data.u_id,
         'token': data.token,
         'start_time': datetime.now(),
-        'modify_time': datetime.now()
+        'modify_time': datetime.now(),
+        'cnt_frame': 0
     }
     db = screenRecordModel()
     db.add_record(datas)
@@ -46,37 +48,33 @@ async def addFrame(token: str = Form(...), pic: UploadFile = File(...)):
         raise HTTPException(status_code=404, detail="no such record")
 
     path = result.v_path
+    cnt = result.cnt_frame
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
-    # 检查视频文件是否存在
-    if not os.path.isfile(path):
-        # 创建一个包含图片的短视频文件
-        image_bytes = await pic.read()
-        image = Image.open(BytesIO(image_bytes))
-        image.save(path, format='GIF', save_all=True, duration=1000, loop=0)
-        db.add_frame_by_token(token, {'modify_time': datetime.now()})
-        raise HTTPException(status_code=201, detail="video created successfully")
+    if cnt == -1:
+        raise HTTPException(status_code=404, detail="record already locked")
 
-    # 读取视频文件
-    video_clip = VideoFileClip(path)
-    # 将上传的图片转换为PIL Image对象
+    # 读取上传的图片
     image_bytes = await pic.read()
     image = Image.open(BytesIO(image_bytes))
-    # 将PIL Image对象转换为numpy数组
-    image_array = numpy.array(image)
-    # 使用numpy数组创建ImageClip
-    image_clip = ImageClip(image_array, duration=1)
-    # 设置图片的位置
-    image_clip = image_clip.set_position(('center', 'center'))
-    # 合成视频和图片
-    final_clip = CompositeVideoClip([video_clip, image_clip.set_start(video_clip.duration)])
-    # 将合成视频保存到新文件
-    final_clip.write_videofile(path, codec='libx264', audio_codec=False, fps=video_clip.fps)
-    # 更新最后确认时间到数据库
-    db.add_frame_by_token(token, {'modify_time': datetime.now()})
 
-    print(f"成功")
-    raise HTTPException(status_code=200, detail="frame added successfully")
+    # 指定目标图片尺寸
+    target_size = (1280, 720)
+    # 调整图片尺寸
+    image = image.resize(target_size)
+
+    # 构建图片文件名，例如 "1.jpg"
+    frame_filename = f"{cnt}.jpg"
+    frame_path = os.path.join(os.path.dirname(path), frame_filename)  # 确保路径是文件夹路径，不是文件路径
+
+    # 保存调整尺寸后的图片
+    image.save(frame_path)
+
+    # 更新最后确认到数据库
+    db.add_frame_by_token(token, {'modify_time': datetime.now(), 'cnt_frame': cnt+1})
+
+    print(f"Frame added successfully: {frame_path}")
+    return {"detail": "frame added successfully"}
 
 @router.get("/getVideoList")
 async def getVideoList(datas: videoList):
@@ -96,24 +94,78 @@ async def getVideoList(datas: videoList):
     ]
     return video_list
 
-@router.post("/getVideo")
+@router.get("/getVideo")
 async def getVideo(token: str = Form(...)):
     db = screenRecordModel()
-    path = db.get_path_by_token(token).v_path
+    result = db.get_path_by_token(token)
+    path = result.v_path
+    cnt = result.cnt_frame
 
+    folder_name = os.path.basename(path)
+    video_path = os.path.join(path, folder_name + '_created.mp4')
+
+    if not os.path.isfile(video_path):
+        # 确定图片文件夹路径
+        images_folder = os.path.dirname(path)
+        images = [os.path.join(images_folder, f"{i}.jpg") for i in range(cnt)]
+
+        # 使用moviepy合成视频
+        clip = ImageSequenceClip(images, fps=1)
+        clip.write_videofile(video_path, codec='libx264')
+
+    # 检查视频文件是否创建成功
+        if not os.path.isfile(video_path):
+            raise HTTPException(status_code=404, detail="Video not created")
+
+    path += '_created.mp4'
     # 检查文件是否存在
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Video not found")
     # 返回视频文件
     return FileResponse(path, media_type='video/mp4', filename=os.path.basename(path))
 
-@router.post("/deleteVideo")
+@router.get("/createLockVideo")
+async def createLockVideo(token: str = Form(...)):
+    db = screenRecordModel()
+    result = db.get_path_by_token(token)
+    path = result.v_path
+    cnt = result.cnt_frame
+
+    if cnt == -1:
+        raise HTTPException(status_code=404, detail="record already locked")
+
+    folder_name = os.path.basename(path)
+    video_path = os.path.join(path, folder_name + '_created.mp4')
+
+    # 确定图片文件夹路径
+    images_folder = os.path.dirname(path)
+    images = [os.path.join(images_folder, f"{i}.jpg") for i in range(cnt)]
+
+    # 使用moviepy合成视频
+    clip = ImageSequenceClip(images, fps=1)
+    clip.write_videofile(video_path, codec='libx264')
+
+    # 检查视频文件是否创建成功
+    if not os.path.isfile(video_path):
+        raise HTTPException(status_code=404, detail="Video not created")
+
+    for image in images:
+        os.remove(image)
+    db.add_frame_by_token(token, {'cnt_frame': -1})
+
+    raise HTTPException(status_code=200, detail="video created successfully")
+
+
+@router.get("/deleteVideo")
 async def deleteVideo(token: str = Form(...)):
     db = screenRecordModel()
-    path = db.get_path_by_token(token).v_path
-
+    result = db.get_path_by_token(token)
+    path = result.v_path
     db.delete_by_token(token)
-    # 检查文件是否存在
-    if os.path.isfile(path):
-        os.remove(path)
-    raise HTTPException(status_code=200, detail="video deleted")
+
+    # 检查路径是否存在并且是文件夹
+    if os.path.isdir(path):
+        # 使用shutil.rmtree来删除整个文件夹
+        shutil.rmtree(path)
+
+    raise HTTPException(status_code=200, detail="video and associated files deleted")

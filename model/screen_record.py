@@ -16,12 +16,11 @@ class screenRecordModel(dbSession, baseModel, listQuery, baseQuery):
         self.session.add(record)
         self.session.commit()
 
-
     # 根据token更新time
-    def add_frame_by_token(self, token: str, datetime_: dict):
+    def add_frame_by_token(self, token: str, data: dict):
         self.session.query(ScreenRecord).filter(
             ScreenRecord.token == token
-        ).update(datetime_)
+        ).update(data)
         self.session.commit()
 
     # 查询视频列表

@@ -373,6 +373,8 @@ class ScreenRecord(Base):
     start_time = Column(DATETIME, nullable=False)
     modify_time = Column(DATETIME, nullable=False)
 
+    cnt_frame = Column(INTEGER, nullable=False)
+
     # bs_id = Column(INTEGER, ForeignKey('business.id'), nullable=False)
     # u_id = Column(INTEGER, ForeignKey('user.id'), nullable=False)
 
