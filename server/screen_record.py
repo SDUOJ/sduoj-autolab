@@ -104,18 +104,17 @@ async def getVideo(token: str = Form(...)):
     folder_name = os.path.basename(path)
     video_path = os.path.join(path, folder_name + '_created.mp4')
 
-    if not os.path.isfile(video_path):
-        # 确定图片文件夹路径
-        images_folder = os.path.dirname(path)
-        images = [os.path.join(images_folder, f"{i}.jpg") for i in range(cnt)]
+    # 确定图片文件夹路径
+    images_folder = os.path.dirname(path)
+    images = [os.path.join(images_folder, f"{i}.jpg") for i in range(cnt)]
 
-        # 使用moviepy合成视频
-        clip = ImageSequenceClip(images, fps=1)
-        clip.write_videofile(video_path, codec='libx264')
+    # 使用moviepy合成视频
+    clip = ImageSequenceClip(images, fps=1)
+    clip.write_videofile(video_path, codec='libx264')
 
     # 检查视频文件是否创建成功
-        if not os.path.isfile(video_path):
-            raise HTTPException(status_code=404, detail="Video not created")
+    if not os.path.isfile(video_path):
+        raise HTTPException(status_code=404, detail="Video not created")
 
     path += '_created.mp4'
     # 检查文件是否存在
