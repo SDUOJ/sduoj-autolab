@@ -7,7 +7,7 @@ from sqlalchemy import Column, ForeignKey, Index, UniqueConstraint
 from sqlalchemy import create_engine
 from sqlalchemy import func
 from sqlalchemy.dialects.mysql import INTEGER, VARCHAR, DATETIME, LONGTEXT, \
-    FLOAT, BIGINT, TINYINT
+    FLOAT, BIGINT, TINYINT, BOOLEAN
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -281,7 +281,10 @@ class ojClass(Base):
     c_seat_num = Column(INTEGER, nullable=False)
 
     # 教室描述
-    c_description=Column(LONGTEXT,nullable=False)
+    c_description = Column(LONGTEXT, nullable=False)
+
+    # 教室是否可用，0不可用1可用
+    c_is_available = Column(TINYINT, nullable=False)
 
 
 class ojSeat(Base):
@@ -329,10 +332,10 @@ class ojClassUser(Base):
     usl_id = Column(BIGINT, ForeignKey("oj_user_seat_list.usl_id"), nullable=False)
 
     # 用户名(学号)
-    username = Column(BIGINT, nullable=False, unique=True, index=True)
+    username = Column(BIGINT, nullable=False, index=True)
 
     # 座位id,外键,唯一标识
-    s_id = Column(BIGINT,ForeignKey("oj_seat.s_id"), nullable=False, unique=True)
+    s_id = Column(BIGINT, ForeignKey("oj_seat.s_id"), nullable=False)
 
 
 class ojClassManageUser(Base):
