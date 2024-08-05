@@ -7,7 +7,7 @@ from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 
 from server import answer_sheet, objective, \
-    problem_set, problem_group, subjective, subjective_judge, summary, class_binding
+    problem_set, problem_group, subjective, subjective_judge, summary, screen_record, class_binding
 from utilsTime import getMsTime
 
 app = FastAPI()
@@ -19,6 +19,7 @@ app.include_router(subjective.router)
 app.include_router(subjective_judge.router)
 app.include_router(summary.router)
 app.include_router(class_binding.router)
+app.include_router(screen_record.router)
 
 
 @app.exception_handler(HTTPException)  # 自定义HttpRequest 请求异常
