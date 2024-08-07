@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Depends
 
 from model.sign_in_record import signInRecordModel
-from model.problem_group import groupModel
-from ser.base import makePageResult
-from ser.sign_in_record import submitLeaveInfoType
+from ser.sign_in_record import submitLeaveInfoType, checkLeaveInfoType
 from utils import makeResponse
 
+# 统一了路由的前缀
 router = APIRouter(
     prefix="/sign"
 )
@@ -25,4 +24,23 @@ async def submit_leave_info(data: submitLeaveInfoType):
     db.submitLeaveInfo(data)
     return makeResponse(None)
 
+
+# 后台审批请假信息
+@router.post("/check")
+async def check_leave_info(data: checkLeaveInfoType):
+    db = signInRecordModel()
+    data = {
+        "sg_u_id": data.sg_u_id,
+        "sg_absence_pass": data.sg_absence_pass
+    }
+    db.checkLeaveInfo(data)
+    return makeResponse(None)
+
+
+# 删除用户签到信息
+@router.post("/{sg_u_id}/delete")
+async def delete_leave_info(sg_u_id: int):
+    db = signInRecordModel()
+    db.deleteLeaveInfo(sg_u_id)
+    return makeResponse(None)
 
