@@ -6,6 +6,19 @@ from db import dbSession, ojSignUser
 
 # /model/sign_in_record.py-------------------------
 class signInRecordModel(dbSession):
+    # 所有用户签到信息查询
+
+    def getUserInfoList(self, sg_id: int):
+        res = []
+        q = self.session.query(ojSignUser).filter(
+            ojSignUser.sg_id == sg_id
+        ).all()
+        for i in q:
+            data = [i.sg_u_id, i.username, i.sg_id, i.sg_time, i.seat_id, i.sg_user_message, i.sg_absence_pass]
+            res.append(data)
+
+        return res
+
     # 用户提交请假信息
     def submitLeaveInfo(self, data: dict):
         sg_u_id = data.get("sg_u_id")
