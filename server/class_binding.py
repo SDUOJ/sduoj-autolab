@@ -1,11 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from model.class_binding import classBindingModel
-from model.problem_group import groupModel
-from ser.base import makePageResult
 from ser.class_binding import createClassroom, editClassroom, createSeatList, editSeatList
-from ser.problem_group import ser_group_add, ser_group_edit, ser_group_list, \
-    ser_group_info, ser_group_search
 from utils import makeResponse
 
 router = APIRouter(

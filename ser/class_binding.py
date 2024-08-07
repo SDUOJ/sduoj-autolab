@@ -5,7 +5,6 @@ from pydantic import BaseModel
 from sqlalchemy.orm import session
 
 from model.class_binding import classBindingModel, IDGenerator
-from ser.base_type import page
 from db import ojClass, dbSession
 
 # /ser/class_binding.py(序列化器部分，感觉像是定义信息;在这里面的函数把得到的传参汇总了再return)----------------------
