@@ -7,7 +7,7 @@ from sqlalchemy import Column, ForeignKey, Index, UniqueConstraint
 from sqlalchemy import create_engine
 from sqlalchemy import func
 from sqlalchemy.dialects.mysql import INTEGER, VARCHAR, DATETIME, LONGTEXT, \
-    FLOAT, BIGINT, TINYINT
+    FLOAT, BIGINT, TINYINT, BOOLEAN
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -281,7 +281,10 @@ class ojClass(Base):
     c_seat_num = Column(INTEGER, nullable=False)
 
     # 教室描述
-    c_description=Column(LONGTEXT,nullable=False)
+    c_description = Column(LONGTEXT, nullable=False)
+
+    # 教室是否可用，0不可用1可用
+    c_is_available = Column(TINYINT, nullable=False)
 
 
 class ojSeat(Base):
@@ -329,10 +332,10 @@ class ojClassUser(Base):
     usl_id = Column(BIGINT, ForeignKey("oj_user_seat_list.usl_id"), nullable=False)
 
     # 用户名(学号)
-    username = Column(BIGINT, nullable=False, unique=True, index=True)
+    username = Column(BIGINT, nullable=False, index=True)
 
     # 座位id,外键,唯一标识
-    s_id = Column(BIGINT,ForeignKey("oj_seat.s_id"), nullable=False, unique=True)
+    s_id = Column(BIGINT, ForeignKey("oj_seat.s_id"), nullable=False)
 
 
 class ojClassManageUser(Base):
@@ -373,8 +376,75 @@ class ScreenRecord(Base):
     start_time = Column(DATETIME, nullable=False)
     modify_time = Column(DATETIME, nullable=False)
 
+    cnt_frame = Column(INTEGER, nullable=False)
+
     # bs_id = Column(INTEGER, ForeignKey('business.id'), nullable=False)
     # u_id = Column(INTEGER, ForeignKey('user.id'), nullable=False)
+
+
+class ojSign(Base):
+    __tablename__ = "oj_sign"
+    sg_id = Column(INTEGER, primary_key=True, autoincrement=True, comment="签到id")
+
+    # 签到模式
+    mode = Column(INTEGER, nullable=False, comment="签到模式")
+
+    # 用户组id
+    group_id = Column(INTEGER, nullable=False, comment="用户组Id")
+
+    # 管理组id
+    m_group_id = Column(INTEGER, nullable=False, comment="管理组id")
+
+    # 创造时间
+    u_gmt_create = Column(DATETIME, nullable=False, server_default=func.now(), comment="创建时间")
+
+    # 修改时间
+    u_gmt_modified = Column(DATETIME, nullable=False, comment="最后修改时间")
+
+    # 签到标签
+    title = Column(VARCHAR(63), nullable=False, comment="签到标签")
+
+    # 开始时间
+    start_time = Column(DATETIME, nullable=False, comment="签到开始时间")
+
+    # 结束时间
+    end_time = Column(DATETIME, nullable=False, comment="签到结束时间")
+
+    # 是否指定座位
+    # 1 绑定  0 未绑定
+    seat_bind = Column(INTEGER, nullable=False, comment="是否绑定座位：1 绑定  0 未绑定")
+
+    # 名单id
+    usl_id = Column(INTEGER, nullable=False, comment="名单id")
+
+
+# 用户签到表
+class ojSignUser(Base):
+    __tablename__ = "oj_sign_user"
+    # 学生签到id
+    sg_u_id = Column(INTEGER, primary_key=True, autoincrement=True, comment="学生签到id")
+
+    # 座位号
+    seat_id = Column(INTEGER, unique=True, nullable=False, comment="座位号")
+
+    # 学生用户名
+    username = Column(VARCHAR(63), unique=True, nullable=False, comment="学生用户名")
+
+    # 签到id
+    sg_id = Column(INTEGER, ForeignKey("oj_sign.sg_id"), nullable=False, index=True, comment="签到id")
+
+    # 签到时间
+    sg_time = Column(DATETIME, nullable=True, comment="签到时间")
+
+    # 签到唯一凭证
+    token = Column(VARCHAR(63), nullable=False, unique=True, comment="签到唯一凭证")
+
+    # 请假信息
+    sg_user_message = Column(LONGTEXT, nullable=True, comment="请假信息")
+
+    # 是否通过审批
+    # 1 通过  0 未通过  none 审批中
+    sg_absence_pass = Column(INTEGER, nullable=True, comment="审批信息：1 通过  0 未通过  none 审批中")
 
 
 class OjSign(Base):
