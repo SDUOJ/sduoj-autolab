@@ -356,8 +356,8 @@ class ScreenRecord(Base):
     # 录屏表，用于记录录屏信息
     __tablename__ = "screen_record"
 
-    # 视频唯一凭证
-    token = Column(VARCHAR(50), nullable=False, primary_key=True, unique=True)  # 假设token应该是唯一的
+    # 视频id
+    v_id = Column(INTEGER, primary_key=True, nullable=False, autoincrement=True)
 
     # 业务类型 业务ID
     bs_type = Column(INTEGER, nullable=False)
@@ -368,6 +368,9 @@ class ScreenRecord(Base):
 
     # 用户id
     u_id = Column(INTEGER, nullable=False)
+
+    # 视频唯一凭证
+    token = Column(VARCHAR(50), nullable=False, unique=True)  # 假设token应该是唯一的
 
     # 创建时间 最后修改时间
     start_time = Column(DATETIME, nullable=False)
@@ -419,7 +422,7 @@ class ojSign(Base):
 class ojSignUser(Base):
     __tablename__ = "oj_sign_user"
     # 学生签到id
-    sg_u_id = Column(INTEGER, primary_key=True, autoincrement=True, comment="学生签到id")
+    sg_u_id = Column(INTEGER, primary_key=True, autoincrement=1, comment="学生签到id")
 
     # 座位号
     seat_id = Column(INTEGER, unique=True, nullable=False, comment="座位号")
@@ -440,8 +443,9 @@ class ojSignUser(Base):
     sg_user_message = Column(LONGTEXT, nullable=True, comment="请假信息")
 
     # 是否通过审批
-    # 1 通过  0 未通过  none 审批中
+    # 1 通过  0 未通过  none 审批中  2 无请假
     sg_absence_pass = Column(INTEGER, nullable=True, comment="审批信息：1 通过  0 未通过  none 审批中")
+
 
 
 from const import Mysql_addr, Mysql_user, Mysql_pass, Mysql_db
