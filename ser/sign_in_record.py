@@ -4,7 +4,7 @@ from typing import List, Optional, Union
 
 from pydantic import BaseModel
 from sqlalchemy.orm import session
-from db import ojSeat, dbSession
+from db import ojClass, dbSession,ojSeat
 
 import os
 import uuid
@@ -14,7 +14,7 @@ import uuid
 class signInType(BaseModel):
     sg_u_id: int
     username: str
-    sg_id: str
+    sg_id: int
     seat_id: int
     sg_user_message: str = None
 
@@ -131,6 +131,8 @@ def checkIn(data: signInType):
         "sg_absence_pass": sg_absence_pass
     }
     return data
+
+
 
 def checktoken(data: usermess):
     Token = uuid.uuid4().hex

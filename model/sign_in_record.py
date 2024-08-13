@@ -65,14 +65,14 @@ class signInRecordModel(dbSession):
 
 
     # 删除签到信息
-    def deleteSign(self, sg_id:str):
+    def deleteSign(self, sg_id:int):
         editInfo = self.session.query(ojSign).filter(
             ojSign.sg_id == sg_id
         ).delete()
         self.session.commit()
 
     # 查询签到信息
-    def getSign(self, sg_id: str):
+    def getSign(self, sg_id: int):
         info = []
         signInfo = self.session.query(ojSign).filter(
             ojSign.sg_id == sg_id
@@ -114,7 +114,7 @@ class signInRecordModel(dbSession):
 
 
     # 所有用户签到信息查询
-    def getUserInfoList(self, sg_id: str):
+    def getUserInfoList(self, sg_id: int):
         res = []
         q = self.session.query(ojSignUser).filter(
             ojSignUser.sg_id == sg_id
