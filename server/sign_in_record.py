@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from model.sign_in_record import signInRecordModel
-from ser.sign_in_record import submitLeaveInfoType, checkLeaveInfoType, sign_create,signEditType,sign_edit, signInType, checkIn
+from ser.sign_in_record import submitLeaveInfoType, checkLeaveInfoType, sign_create, signEditType, sign_edit, signInType, checkIn, SignInData, checktoken, SignInData
 from utils import makeResponse
 
 # 统一了路由的前缀
@@ -107,3 +107,24 @@ async def delete_leave_info(sg_u_id: int):
     db = signInRecordModel()
     db.deleteLeaveInfo(sg_u_id)
     return makeResponse(None)
+
+# 返回token 12
+@router.post("/returnToken")
+async def check_token(data: dict = Depends(checktoken)):
+    db = signInRecordModel()
+    db.committoken(data)
+
+    return data["token"]
+
+
+# 传递二维码信息 13
+@router.post("/checkAdmin")
+async def check_admin(data: dict = Depends(scanIn)):
+    db = signInRecordModel()
+    db.checktoken(data)
+
+    return makeResponse(None)
+
+
+
+

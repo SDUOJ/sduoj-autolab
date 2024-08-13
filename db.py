@@ -422,16 +422,16 @@ class ojSign(Base):
 class ojSignUser(Base):
     __tablename__ = "oj_sign_user"
     # 学生签到id
-    sg_u_id = Column(INTEGER, primary_key=True, autoincrement=1, comment="学生签到id")
+    sg_u_id = Column(INTEGER, primary_key=True, autoincrement=True, comment="学生签到id")
 
-    # 座位号
-    seat_id = Column(INTEGER, unique=True, nullable=False, comment="座位号")
+    # 座位id
+    seat_id = Column(BIGINT, nullable=True, comment="座位id")
 
     # 学生用户名
-    username = Column(VARCHAR(63), unique=True, nullable=False, comment="学生用户名")
+    username = Column(VARCHAR(63), nullable=False, comment="学生用户名")
 
     # 签到id
-    sg_id = Column(INTEGER, ForeignKey("oj_sign.sg_id"), nullable=False, index=True, comment="签到id")
+    sg_id = Column(VARCHAR(63), ForeignKey("oj_sign.sg_id"), nullable=False, index=True, comment="签到id")
 
     # 签到时间
     sg_time = Column(DATETIME, nullable=True, comment="签到时间")

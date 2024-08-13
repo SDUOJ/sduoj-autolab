@@ -4,7 +4,7 @@ from typing import List, Optional, Union
 
 from pydantic import BaseModel
 from sqlalchemy.orm import session
-from db import ojClass, dbSession
+from db import ojSeat, dbSession
 
 import os
 import uuid
@@ -14,7 +14,7 @@ import uuid
 class signInType(BaseModel):
     sg_u_id: int
     username: str
-    sg_id: int
+    sg_id: str
     seat_id: int
     sg_user_message: str = None
 
@@ -58,6 +58,14 @@ class checkLeaveInfoType(BaseModel):
     sg_u_id: int
     sg_absence_pass: int = None
 
+class usermess(BaseModel):
+    username: str
+    sg_id: str
+
+class SignInData(BaseModel):
+    token: str
+    c_id: int
+    s_number: int
 
 def sign_create(data: signType):
     if data.mode is None:
@@ -121,5 +129,24 @@ def checkIn(data: signInType):
         "token": Token,
         "sg_user_message": data.sg_user_message,
         "sg_absence_pass": sg_absence_pass
+    }
+    return data
+
+def checktoken(data: usermess):
+    Token = uuid.uuid4().hex
+    data = {
+        "username": data.username,
+        "sg_id": data.sg_id,
+        "token": Token,
+    }
+    return data
+
+def scanIn(data: SignInData):
+    Now = datetime.now()
+    data = {
+        "sg_time": Now,
+        "token": data.token,
+        "c_id": data.c_id,
+        "s_number": data.s_number
     }
     return data
