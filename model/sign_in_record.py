@@ -3,14 +3,14 @@ import datetime
 from fastapi import HTTPException
 from sqlalchemy import and_, func
 
-from db import dbSession, ojSignUser,ojSign
+from db import dbSession, ojSignUser, ojSign, ojSeat
 
 
 # /model/sign_in_record.py-------------------------
 class signInRecordModel(dbSession):
 
     # 新建一个签到  input: mode  group_id  m_group_id  title  start_time  end_time  seat_bind
-    def createSign(self,data: dict):
+    def createSign(self, data: dict):
         start_time = data["start_time"]
         end_time = data["end_time"]
         u_gmt_create = data["u_gmt_create"]
@@ -30,7 +30,7 @@ class signInRecordModel(dbSession):
 
 
     # 修改签到信息
-    def editSign(self,data: dict, sg_id:int):
+    def editSign(self,data: dict, sg_id:str):
         #获取数据
         mode = data["mode"]
         group_id = data["group_id"]
@@ -65,14 +65,14 @@ class signInRecordModel(dbSession):
 
 
     # 删除签到信息
-    def deleteSign(self, sg_id:int):
+    def deleteSign(self, sg_id:str):
         editInfo = self.session.query(ojSign).filter(
             ojSign.sg_id == sg_id
         ).delete()
         self.session.commit()
 
     # 查询签到信息
-    def getSign(self, sg_id: int):
+    def getSign(self, sg_id: str):
         info = []
         signInfo = self.session.query(ojSign).filter(
             ojSign.sg_id == sg_id
@@ -114,7 +114,7 @@ class signInRecordModel(dbSession):
 
 
     # 所有用户签到信息查询
-    def getUserInfoList(self, sg_id: int):
+    def getUserInfoList(self, sg_id: str):
         res = []
         q = self.session.query(ojSignUser).filter(
             ojSignUser.sg_id == sg_id
@@ -154,3 +154,33 @@ class signInRecordModel(dbSession):
         )
         sg_id = info.first().sg_id
         return sg_id
+
+    # 提交部分用户信息
+    def committoken(self, data: dict):
+        data = self.jsonDumps(data, ["sg_u_id", "seat_id", "sg_time", "sg_user_message", "sg_absence_pass"])
+        self.session.add(ojSignUser(**data))
+        self.session.flush()
+        self.session.commit()
+
+    # 验证token一致，完善签到信息
+    def checktoken(self, data: dict):
+        seat_id = self.session.query(ojSeat).filter(
+            ojSeat.c_id == data["c_id"], ojSeat.s_number == data["s_number"]
+        ).first().s_id
+        print(seat_id)
+        datas = {
+            "sg_time": data["sg_time"],
+            "seat_id": seat_id,
+        }
+        sg_time = datas["sg_time"]
+        sg_time = sg_time.strftime("%Y-%m-%d %H:%M:%S")
+        datas["sg_time"] = sg_time
+        self.session.query(ojSignUser).filter(
+            ojSignUser.token == data["token"]
+        ).update(datas)
+        self.session.commit()
+
+
+
+
+
