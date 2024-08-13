@@ -424,14 +424,14 @@ class ojSignUser(Base):
     # 学生签到id
     sg_u_id = Column(INTEGER, primary_key=True, autoincrement=True, comment="学生签到id")
 
-    # 座位id
-    seat_id = Column(BIGINT, nullable=True, comment="座位id")
+    # 座位号
+    seat_id = Column(INTEGER, comment="座位号")
 
     # 学生用户名
     username = Column(VARCHAR(63), nullable=False, comment="学生用户名")
 
     # 签到id
-    sg_id = Column(VARCHAR(63), ForeignKey("oj_sign.sg_id"), nullable=False, index=True, comment="签到id")
+    sg_id = Column(INTEGER, ForeignKey("oj_sign.sg_id"), nullable=False, index=True, comment="签到id")
 
     # 签到时间
     sg_time = Column(DATETIME, nullable=True, comment="签到时间")
@@ -446,6 +446,10 @@ class ojSignUser(Base):
     # 1 通过  0 未通过  none 审批中  2 无请假
     sg_absence_pass = Column(INTEGER, nullable=True, comment="审批信息：1 通过  0 未通过  none 审批中")
 
+    # 让sg_id  username  seat_id 联合唯一
+    _table_aegs_ = (
+        UniqueConstraint("sg_id", "username", "seat_id", name="u_id_seat"),
+    )
 
 
 from const import Mysql_addr, Mysql_user, Mysql_pass, Mysql_db

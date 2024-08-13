@@ -76,7 +76,7 @@ async def get_user_info_list(sg_id: int):
     return res
 
 
-# 用户提交请假信息 9
+# 用户提交请假信息9
 @router.post("/submit")
 async def submit_leave_info(data: submitLeaveInfoType):
     db = signInRecordModel()
