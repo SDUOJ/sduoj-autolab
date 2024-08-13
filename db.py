@@ -422,7 +422,7 @@ class ojSign(Base):
 class ojSignUser(Base):
     __tablename__ = "oj_sign_user"
     # 学生签到id
-    sg_u_id = Column(INTEGER, primary_key=True, autoincrement=1, comment="学生签到id")
+    sg_u_id = Column(INTEGER, primary_key=True, autoincrement=True, comment="学生签到id")
 
     # 座位号
     seat_id = Column(INTEGER, comment="座位号")
