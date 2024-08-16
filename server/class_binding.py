@@ -8,6 +8,7 @@ router = APIRouter(
     prefix="/classroom"
 )
 
+
 # /server/class_binding.py------------------------------------------
 
 
@@ -84,3 +85,9 @@ async def get_single_user_info(groupId: int, username: int):
     return res
 
 
+# 查找座位IP
+@router.get("/searchIP")
+async def search_s_ip(data: dict):
+    db = classBindingModel()
+    res = db.search_s_ip(data)
+    return res
