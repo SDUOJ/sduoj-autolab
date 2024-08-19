@@ -46,15 +46,23 @@ async def signInfo(sg_id: int):
     return info
 
 
-# 查询用户存在的签到 5
-@router.get("/{sg_id}/list")
-async def signList(username: str, data: dict = Depends(get_page)):
-    db = signInRecordModel()
-    info = db.getUserSign(username, data)
+# 查询所有的签到信息 5
+@router.get("/list")
+async def signList(pageInfo: dict = Depends(get_page)):
+    db=signInRecordModel()
+    info = db.getSignList(pageInfo)
     return info
 
 
-# 用户签到 6
+# 查询一个sg_id中的用户签到信息
+@router.get("/{sg_id}/userInfoList")
+async def signList(sg_id: int, data: dict = Depends(get_page)):
+    db = signInRecordModel()
+    info = db.getUserSign(sg_id, data)
+    return info
+
+
+# 用户签到
 @router.post("/checkIn")
 async def checkInUser(data: dict = Depends(checkIn)):
     db = signInRecordModel()
@@ -62,11 +70,11 @@ async def checkInUser(data: dict = Depends(checkIn)):
     return makeResponse(None)
 
 
-# 用户签到信息查询 7
-@router.get("/{username}/userInfo")
-async def userInfo(username: str):
+# 某一组中某一用户签到信息查询 7
+@router.get("/{sg_id}/{username}/userInfo")
+async def userInfo(sg_id: int, username: str):
     db = signInRecordModel()
-    info = db.getUserInfo(username)
+    info = db.getUserInfo(sg_id, username)
     return info
 
 

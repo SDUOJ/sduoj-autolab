@@ -35,6 +35,7 @@ class userSignIn(BaseModel):
 
 
 class signEditType(BaseModel):
+    sg_id: int
     mode: int = None
     group_id: int = None
     m_group_id: int = None
@@ -42,7 +43,6 @@ class signEditType(BaseModel):
     start_time: datetime = None
     end_time: datetime = None
     seat_bind: int = None
-
 
 
 class submitLeaveInfoType(BaseModel):
@@ -71,17 +71,6 @@ class pageType(BaseModel):
 
 
 def sign_create(data: signType):
-    if data.mode is None:
-        raise HTTPException(status_code=400, detail="签到模式未填写")
-    elif data.mode not in range(0, 4):
-        raise HTTPException(status_code=400, detail="签到模式的输入不合法")
-    elif not data.m_group_id:
-        raise HTTPException(status_code=400, detail="管理组未填写")
-    elif not data.start_time or not data.end_time:
-        raise HTTPException(status_code=400, detail="开始或结束时间未填写")
-    elif not data.seat_bind:
-        raise HTTPException(status_code=400, detail="绑定信息未填写")
-
     Now = datetime.now()
     data={
         "mode": data.mode,
@@ -101,6 +90,7 @@ def sign_create(data: signType):
 def sign_edit(data: signEditType):
     Now = datetime.now()
     data = {
+        "sg_id":data.sg_id,
         "mode": data.mode,
         "group_id": data.m_group_id,
         "m_group_id": data.m_group_id,
@@ -134,8 +124,8 @@ def checkIn(data: signInType):
 
 def get_page(data: pageType):
     data = {
-    "pageSize":data.pageSize,
-    "pageNow":data.pageNow
+    "pageSize": data.pageSize,
+    "pageNow": data.pageNow
     }
     return data
 
