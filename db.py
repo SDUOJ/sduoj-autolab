@@ -1,13 +1,11 @@
 import copy
 import json
-import os
-import sys
 
 from sqlalchemy import Column, ForeignKey, Index, UniqueConstraint
 from sqlalchemy import create_engine
 from sqlalchemy import func
 from sqlalchemy.dialects.mysql import INTEGER, VARCHAR, DATETIME, LONGTEXT, \
-    FLOAT, BIGINT, TINYINT, BOOLEAN
+    FLOAT, BIGINT, TINYINT
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -378,10 +376,6 @@ class ScreenRecord(Base):
     modify_time = Column(DATETIME, nullable=False)
 
     cnt_frame = Column(INTEGER, nullable=False)
-
-    # bs_id = Column(INTEGER, ForeignKey('business.id'), nullable=False)
-    # u_id = Column(INTEGER, ForeignKey('user.id'), nullable=False)
-
 
 
 class ojSign(Base):

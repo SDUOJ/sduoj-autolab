@@ -1,34 +1,39 @@
-import mimetypes
 import os
 import shutil
 from datetime import datetime
 from io import BytesIO
 
 from PIL import Image
-from fastapi import APIRouter, Form, File, UploadFile, HTTPException
+from fastapi import APIRouter, Form, File, UploadFile
 from fastapi.responses import FileResponse
 from moviepy.editor import ImageSequenceClip
+from moviepy.video.compositing.concatenate import concatenate_videoclips
+from moviepy.video.io.VideoFileClip import VideoFileClip
 
-from model.problem_set import problemSetModel
 from model.screen_record import screenRecordModel
 from ser.screen_record import newRecord, ResponseModel, VideoList, PSList, NormalResponse
 
 router = APIRouter(
     prefix="/screen_record"
 )
+
+
+# 添加记录
 @router.post("/addRecord")
 async def addRecord(data: newRecord):
     db = screenRecordModel()
-    db2 = problemSetModel()
 
     result = db.get_path_by_token(data.token)
     if result is not None:
         print("视频已存在")
-        return NormalResponse(code=0, message="记录已经存在")
+        return NormalResponse(code=0, message="记录已经存在", data="记录已经存在")
 
-    res = await db2.ps_get_info_by_id(data.bs_id)
+    res = db.get_ps_type(data.bs_id)
+    if res is None:
+        return NormalResponse(code=404, message="题单不存在", data="题单不存在")
+
     datas = {
-        'bs_type': res["type"],
+        'bs_type': res.type,
         'bs_id': data.bs_id,
         'v_path': "D:\\SDUOJ\\ScreenRecord\\" + data.u_name + "_" + str(datetime.now().strftime("%Y%m%d%H%M%S")) + "\\",
         'u_id': data.u_id,
@@ -40,53 +45,50 @@ async def addRecord(data: newRecord):
     }
     db = screenRecordModel()
     db.add_record(datas)
-    return NormalResponse(code=0, message="记录添加成功")
+    return NormalResponse(code=0, message="记录添加成功", data="记录添加成功")
 
 
+# 追加帧
 @router.post("/addFrame")
 async def addFrame(token: str = Form(...), pic: UploadFile = File(...)):
     db = screenRecordModel()
 
     result = db.get_path_by_token(token)
     if result is None:
-        return NormalResponse(code=404, message="无此视频记录")
+        return NormalResponse(code=0, message="无此视频记录", data="无此视频记录")
 
     path = result.v_path
     cnt = result.cnt_frame
-    os.makedirs(os.path.dirname(path), exist_ok=True)
 
     if cnt == -1:
-        return NormalResponse(code=404, message="记录已锁定")
+        return NormalResponse(code=0, message="视频正在导出", data="视频正在导出")
 
-    # 读取上传的图片
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
     image_bytes = await pic.read()
     image = Image.open(BytesIO(image_bytes))
 
-    # 指定目标图片尺寸
     target_size = (1280, 720)
-    # 调整图片尺寸
     image = image.resize(target_size)
 
-    # 构建图片文件名，例如 "1.jpg"
     frame_filename = f"{cnt}.jpg"
     frame_path = os.path.join(os.path.dirname(path), frame_filename)  # 确保路径是文件夹路径，不是文件路径
 
-    # 保存调整尺寸后的图片
     image.save(frame_path)
 
-    # 更新最后确认到数据库
-    db.add_frame_by_token(token, {'modify_time': datetime.now(), 'cnt_frame': cnt+1})
+    db.add_frame_by_token(token, {'modify_time': datetime.now(), 'cnt_frame': cnt + 1})
 
     print(f"Frame added successfully: {frame_path}")
-    return NormalResponse(code=0, message="追加帧成功")
+    return NormalResponse(code=0, message="追加帧成功", data="追加帧成功")
 
 
+# 获取有录屏记录的题单列表
 @router.get("/getPSList")
 async def getPSList():
     db = screenRecordModel()
     result = db.get_ps_list()
     if not result:
-        return NormalResponse(code=0, message="无录屏题单记录")
+        return NormalResponse(code=0, message="无录屏题单记录", data="无录屏题单记录")
 
     ps_list = [
         PSList(
@@ -103,13 +105,15 @@ async def getPSList():
 
     return ResponseModel(code=0, message="获取题单列表成功", data=ps_list)
 
+
+# 获取某个题单的视频列表
 @router.get("/getVideoList")
 async def getVideoList(bs_id: int):
     data = bs_id
     db = screenRecordModel()
     result = db.get_video_list(data)
     if not result:
-        return NormalResponse(code=404, message="无视频记录")
+        return NormalResponse(code=404, message="无视频记录", data="无视频记录")
 
     video_list = [
         VideoList(
@@ -124,6 +128,8 @@ async def getVideoList(bs_id: int):
 
     return ResponseModel(code=0, message="获取视频列表成功", data=video_list)
 
+
+# 获取视频下载
 @router.get("/getVideo")
 async def getVideo(token: str):
     db = screenRecordModel()
@@ -134,53 +140,35 @@ async def getVideo(token: str):
     folder_name = os.path.basename(path)
     video_path = os.path.join(path, folder_name + '_created.mp4')
 
-    # 检查视频文件是否已存在
-    if os.path.isfile(video_path):
+    video_exists = os.path.isfile(video_path)
+    images_folder = path
+    images = [os.path.join(images_folder, f"{i}.jpg") for i in range(cnt)]
+
+    if cnt == 0 and video_exists:
         return FileResponse(video_path, media_type='video/mp4', filename=os.path.basename(video_path))
-
-    images_folder = os.path.dirname(path)
-    images = [os.path.join(images_folder, f"{i}.jpg") for i in range(cnt)]
-
-    clip = ImageSequenceClip(images, fps=1)
-    clip.write_videofile(video_path, codec='libx264')
+    else:
+        # 暂时锁定视频，防止冲突
+        db.add_frame_by_token(token, {'cnt_frame': -1})
+        if video_exists:
+            existing_video = VideoFileClip(video_path)
+            clip = ImageSequenceClip(images, fps=1)
+            final_video = concatenate_videoclips([existing_video, clip])
+            final_video.write_videofile(video_path, codec='libx264', audio=False)
+        else:
+            clip = ImageSequenceClip(images, fps=1)
+            clip.write_videofile(video_path, codec='libx264', audio=False)
 
     if not os.path.isfile(video_path):
-        return NormalResponse(code=404, message="视频文件创建失败")
-
-    return FileResponse(video_path, media_type='video/mp4', filename=os.path.basename(video_path))
-
-@router.get("/createLockVideo")
-async def createLockVideo(token: str):
-    db = screenRecordModel()
-    result = db.get_path_by_token(token)
-    path = result.v_path
-    cnt = result.cnt_frame
-
-    if cnt == -1:
-        return NormalResponse(code=404, message="记录已锁定")
-
-    folder_name = os.path.basename(path)
-    video_path = os.path.join(path, folder_name + '_created.mp4')
-
-    # 确定图片文件夹路径
-    images_folder = os.path.dirname(path)
-    images = [os.path.join(images_folder, f"{i}.jpg") for i in range(cnt)]
-
-    # 使用moviepy合成视频
-    clip = ImageSequenceClip(images, fps=1)
-    clip.write_videofile(video_path, codec='libx264')
-
-    # 检查视频文件是否创建成功
-    if not os.path.isfile(video_path):
-        return NormalResponse(code=404, message="视频创建失败")
+        return {"code": 404, "message": "视频文件创建失败", "data": "视频文件创建失败"}
 
     for image in images:
         os.remove(image)
-    db.add_frame_by_token(token, {'cnt_frame': -1})
+    db.add_frame_by_token(token, {'cnt_frame': 0})
 
-    return NormalResponse(code=0, message="记录锁定成功")
+    return FileResponse(video_path, media_type='video/mp4', filename=os.path.basename(video_path))
 
 
+# 删除记录和视频
 @router.get("/deleteVideo")
 async def deleteVideo(token: str):
     db = screenRecordModel()
@@ -188,9 +176,8 @@ async def deleteVideo(token: str):
     path = result.v_path
     db.delete_by_token(token)
 
-    # 检查路径是否存在并且是文件夹
     if os.path.isdir(path):
         # 使用shutil.rmtree来删除整个文件夹
         shutil.rmtree(path)
 
-    return NormalResponse(code=0, message="视频记录已删除")
+    return NormalResponse(code=0, message="视频记录已删除", data="视频记录已删除")
