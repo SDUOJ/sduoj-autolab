@@ -11,3 +11,5 @@ Accept: application/json
 ###
 POST http://127.0.0.1:8000/screen_record/addRecord
 Accept: application/json
+POST http://127.0.0.1:8000/screen_record/addRecord
+Accept: application/json
