@@ -218,9 +218,9 @@ class signInRecordModel(dbSession):
         self.session.commit()
 
     # 删除用户签到信息
-    def deleteLeaveInfo(self, sg_id: int, username: str):
+    def deleteLeaveInfo(self, sg_u_id: int):
         self.session.query(ojSignUser).filter(
-            ojSignUser.sg_id == sg_id, ojSignUser.username == username
+            ojSignUser.sg_u_id == sg_u_id
         ).delete()
         self.session.commit()
 

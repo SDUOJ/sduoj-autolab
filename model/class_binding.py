@@ -151,13 +151,11 @@ class classBindingModel(dbSession):
         c_is_available = data.get("c_is_available")
 
         s_number = data.get("s_number")
-        s_tag = data.get("s_tag")
 
         c_id = self.get_c_id_by_c_name(c_name)
         s_id = self.get_s_id_by_s_number_and_c_id(s_number, c_id) if s_number is not None else None
 
         update_cdata = {}  # 有关教室的更新
-        update_sdata = {}  # 有关座位的更新
 
         if c_name is not None:
 
@@ -168,19 +166,10 @@ class classBindingModel(dbSession):
             if c_is_available is not None:
                 update_cdata["c_is_available"] = c_is_available
 
-        if s_number is not None:
-            if s_tag is not None:
-                update_sdata["s_tag"] = s_tag
-
         if update_cdata:
             self.session.query(ojClass).filter(
                 ojClass.c_id == c_id
             ).update(update_cdata)
-            self.session.commit()
-        if update_sdata:
-            self.session.query(ojSeat).filter(
-                ojSeat.s_id == s_id
-            ).update(update_sdata)
             self.session.commit()
 
     # 获取当前教室信息
@@ -427,4 +416,30 @@ class classBindingModel(dbSession):
             res["data"].append(data)
 
         return res
+
+    # 查询座位IP
+    # input: groupId, username
+    def search_s_ip(self, data: dict):
+
+        groupId = data.get("groupId")
+        username = data.get("username")
+
+        # 根据groupId查usl_id
+        q_usl_id = self.session.query(ojUserSeatList).filter(
+            ojUserSeatList.groupId == groupId
+        )
+        usl_id = q_usl_id.first().usl_id
+
+        # 根据usl_id和username查s_id
+        query = self.session.query(ojClassUser).filter(
+            and_(ojClassUser.usl_id == usl_id, ojClassUser.username == username)
+        )
+        s_id = query.first().s_id
+
+        q_ip = self.session.query(ojSeat).filter(
+            ojSeat.s_id == s_id
+        )
+        s_ip = q_ip.first().s_ip
+        return s_ip
+
 

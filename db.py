@@ -286,6 +286,9 @@ class ojClass(Base):
     # 教室是否可用，0不可用1可用
     c_is_available = Column(TINYINT, nullable=False)
 
+    # 区分物理地址(哪个楼上)
+    address = Column(VARCHAR(50), nullable=False)
+
 
 class ojSeat(Base):
     # 座位信息表：用于记录所有的座位信息

@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends
 
 from model.sign_in_record import signInRecordModel
-from ser.sign_in_record import submitLeaveInfoType, checkLeaveInfoType, sign_create, signEditType, sign_edit, signInType, checkIn, SignInData, checktoken, SignInData, scanIn, pageType,get_page
+from ser.sign_in_record import (submitLeaveInfoType, checkLeaveInfoType,
+    sign_create, signEditType, sign_edit, signInType, checkIn, SignInData,
+    checktoken, SignInData, scanIn, pageType,get_page)
 from utils import makeResponse
 
 # 统一了路由的前缀
@@ -102,11 +104,11 @@ async def check_leave_info(data: checkLeaveInfoType):
 
 
 # 删除用户签到信息 11
-@router.post("/{username}/{sg_id}/delete")
-async def delete_leave_info(sg_id: int, username: str):
+@router.post("/{sg_u_id}/delete")
+async def delete_leave_info(sg_u_id: int):
     db = signInRecordModel()
-    db.deleteLeaveInfo(sg_id, username)
-    return makeResponse(True)
+    db.deleteLeaveInfo(sg_u_id)
+    return makeResponse(None)
 
 # 返回token 12
 @router.post("/returnToken")
