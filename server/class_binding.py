@@ -38,7 +38,7 @@ async def get_classroom_info(c_name: str):
 
 # 查找所有可用教室
 @router.get("/classroomListInfo")
-async def get_available_classroom(pageNow: int, pageSize: int):
+async def get_available_classroom(pageNow: int = None, pageSize: int = None):
     # pageNow: 当前页数  pageSize: 页数大小
     db = classBindingModel()
     res = db.get_available_classroom(pageNow, pageSize)
