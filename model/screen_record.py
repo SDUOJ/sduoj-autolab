@@ -24,11 +24,9 @@ class screenRecordModel(dbSession, baseModel, listQuery, baseQuery):
         self.session.commit()
 
     # 查询视频列表
-    def get_video_list(self, data: dict):
+    def get_video_list(self, data: int):
         result = self.session.query(ScreenRecord).filter(
-            ScreenRecord.bs_type == data["bs_type"],
-            ScreenRecord.bs_id == data["bs_id"],
-            ScreenRecord.u_id == data["u_id"],
+            ScreenRecord.bs_id == data,
         ).all()
         return result
 
@@ -38,3 +36,9 @@ class screenRecordModel(dbSession, baseModel, listQuery, baseQuery):
             # 删除数据库中的记录
             self.session.delete(result)
             self.session.commit()
+
+    def get_ps_list(self):
+        query = self.session.query(ScreenRecord, db.ProblemSet).join(
+            db.ProblemSet, ScreenRecord.bs_id == db.ProblemSet.psid
+        ).distinct(db.ProblemSet.psid)
+        return query.all()
