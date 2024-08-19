@@ -4,11 +4,13 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
 from starlette.exceptions import HTTPException
+from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from server import answer_sheet, objective, \
-    problem_set, problem_group, subjective, subjective_judge, summary, screen_record, class_binding, sign_in_record
+    problem_set, problem_group, subjective, subjective_judge, summary, screen_record
 from utilsTime import getMsTime
+
 
 app = FastAPI()
 app.include_router(objective.router)
@@ -18,10 +20,18 @@ app.include_router(problem_group.router)
 app.include_router(subjective.router)
 app.include_router(subjective_judge.router)
 app.include_router(summary.router)
-app.include_router(class_binding.router)
 app.include_router(screen_record.router)
-app.include_router(sign_in_record.router)
 
+origins = [
+    "*"
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,  # 允许的源列表
+    allow_credentials=True,  # 允许返回 cookies
+    allow_methods=["*"],  # 允许所有 HTTP 方法
+    allow_headers=["*"],  # 允许所有 HTTP 头
+)
 
 @app.exception_handler(HTTPException)  # 自定义HttpRequest 请求异常
 async def http_exception_handle(request, exc):
