@@ -68,12 +68,12 @@ class classBindingModel(dbSession):
         return ojClassUser_id
 
     # 新建教室和座位
-    # input: c_name, c_seat_num, c_description
+    # input: c_name, c_seat_num, c_description ,address
     def classroom_create(self, data: dict):
         c_id = data.get("c_id")
         c_seat_num = data.get("c_seat_num")
 
-        data = self.jsonDumps(data, ["c_id", "c_name", "c_seat_num", "c_description", "c_is_available"])
+        data = self.jsonDumps(data, ["c_id", "c_name", "c_seat_num", "c_description", "c_is_available", "address"])
         self.session.add(ojClass(**data))
         self.session.flush()
         self.session.commit()
@@ -173,9 +173,10 @@ class classBindingModel(dbSession):
             self.session.commit()
 
     # 获取当前教室信息
-    # input:c_name
+    # input:c_name, usl_id
     def get_classroom_info(self, data: dict):
         c_name = data.get("c_name")
+        usl_id = data.get("usl_id")
         c_id = self.get_c_id_by_c_name(c_name)
         data = {}
         # 查出指定教室的全部信息
@@ -202,8 +203,9 @@ class classBindingModel(dbSession):
         data["usl"] = []
         for i in s_id:
             username = None
+            # 判断是否是对应题单的数据
             qlist = self.session.query(ojClassUser).filter(
-                ojClassUser.s_id == i
+                ojClassUser.s_id == i and ojClassUser.usl_id == usl_id
             )
             user_obj = qlist.first()
 
@@ -217,7 +219,7 @@ class classBindingModel(dbSession):
 
     # 查询所有可用教室
     # input: pageNow, pageSize
-    def get_available_classroom(self, pageNow, pageSize):
+    def get_available_classroom(self, pageNow=None, pageSize=None):
         res = {"data": []}
         # 求数据总数量
         query = self.session.query(func.count(ojClass.c_id)).filter(
@@ -225,6 +227,10 @@ class classBindingModel(dbSession):
         )
         totalNum = query.scalar()
         res["totalNum"] = totalNum
+        if pageNow is None:
+            pageNow = 1
+        if pageSize is None:
+            pageSize = totalNum
         # 求总页数
         totalPage = totalNum // pageSize
         res["totalPage"] = totalPage
@@ -441,5 +447,3 @@ class classBindingModel(dbSession):
         )
         s_ip = q_ip.first().s_ip
         return s_ip
-
-
