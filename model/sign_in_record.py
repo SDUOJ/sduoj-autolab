@@ -194,7 +194,6 @@ class signInRecordModel(dbSession):
         return info
 
 
-
     # 所有用户签到信息查询
     def getUserInfoList(self, group_id: int, username: str, page: dict):
         res = {"rows": []}

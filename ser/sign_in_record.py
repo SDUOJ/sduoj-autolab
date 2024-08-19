@@ -56,9 +56,11 @@ class checkLeaveInfoType(BaseModel):
     sg_u_id: int
     sg_absence_pass: int = None
 
+
 class usermess(BaseModel):
     username: str
     sg_id: str
+
 
 class SignInData(BaseModel):
     token: str
