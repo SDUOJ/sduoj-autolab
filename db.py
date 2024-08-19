@@ -378,7 +378,6 @@ class ScreenRecord(Base):
     cnt_frame = Column(INTEGER, nullable=False)
 
 
-
 class ojSign(Base):
     __tablename__ = "oj_sign"
     sg_id = Column(INTEGER, primary_key=True, autoincrement=True, comment="签到id")
