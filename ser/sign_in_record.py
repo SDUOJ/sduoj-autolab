@@ -65,6 +65,7 @@ class SignInData(BaseModel):
     c_id: int
     s_number: int
 
+
 class pageType(BaseModel):
     pageNow: int
     pageSize: int

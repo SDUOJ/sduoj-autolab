@@ -126,6 +126,7 @@ async def delete_leave_info(sg_u_id: int):
     db.deleteLeaveInfo(sg_u_id)
     return makeResponse(None)
 
+
 # 返回token 14
 @router.post("/sign/returnToken")
 async def check_token(data: dict = Depends(checktoken)):

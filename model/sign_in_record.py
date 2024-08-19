@@ -117,6 +117,7 @@ class signInRecordModel(dbSession):
 
         return info
 
+
     # 查询一个签到中的所有签到用户 006
     def getUserSign(self, sg_id: int, pageNow: int , pageSize: int):
         info = {"rows": []}
