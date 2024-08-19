@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from model.sign_in_record import signInRecordModel
-from ser.sign_in_record import submitLeaveInfoType, checkLeaveInfoType, sign_create, signEditType, sign_edit, signInType, checkIn, SignInData, checktoken, SignInData
+from ser.sign_in_record import submitLeaveInfoType, checkLeaveInfoType, sign_create, signEditType, sign_edit, signInType, checkIn, SignInData, checktoken, SignInData, scanIn, pageType,get_page
 from utils import makeResponse
 
 # 统一了路由的前缀
@@ -23,7 +23,7 @@ async def signCreate(data: dict = Depends(sign_create)):
 # 修改签到信息 2
 @router.post("/{sg_id}/edit")
 async def signEdit(sg_id: int, data: dict = Depends(sign_edit)):
-    db=signInRecordModel()
+    db = signInRecordModel()
     db.editSign(data, sg_id)
     return makeResponse(None)
 
@@ -45,10 +45,10 @@ async def signInfo(sg_id: int):
 
 
 # 查询用户存在的签到 5
-@router.get("/{username}/list")
-async def signList(username: str):
+@router.get("/{sg_id}/list")
+async def signList(username: str, data: dict = Depends(get_page)):
     db = signInRecordModel()
-    info = db.getUserSign(username)
+    info = db.getUserSign(username, data)
     return info
 
 
@@ -61,18 +61,18 @@ async def checkInUser(data: dict = Depends(checkIn)):
 
 
 # 用户签到信息查询 7
-@router.get("/{sg_u_id}/userInfo")
-async def userInfo(sg_u_id: int):
+@router.get("/{username}/userInfo")
+async def userInfo(username: str):
     db = signInRecordModel()
-    info = db.getUserInfo(sg_u_id)
+    info = db.getUserInfo(username)
     return info
 
 
 # 所有用户签到信息查询 8
-@router.get("/{sg_id}/userInfoList")
-async def get_user_info_list(sg_id: int):
+@router.get("/{group_id}/{username}/list")
+async def get_user_info_list(group_id: int, username: str, data: dict = Depends(get_page)):
     db = signInRecordModel()
-    res = db.getUserInfoList(sg_id)
+    res = db.getUserInfoList(group_id, username, data)
     return res
 
 
@@ -102,11 +102,11 @@ async def check_leave_info(data: checkLeaveInfoType):
 
 
 # 删除用户签到信息 11
-@router.post("/{sg_u_id}/delete")
-async def delete_leave_info(sg_u_id: int):
+@router.post("/{username}/{sg_id}/delete")
+async def delete_leave_info(sg_id: int, username: str):
     db = signInRecordModel()
-    db.deleteLeaveInfo(sg_u_id)
-    return makeResponse(None)
+    db.deleteLeaveInfo(sg_id, username)
+    return makeResponse(True)
 
 # 返回token 12
 @router.post("/returnToken")
