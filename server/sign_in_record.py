@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends
 
 from model.sign_in_record import signInRecordModel
-from ser.sign_in_record import submitLeaveInfoType, checkLeaveInfoType, \
-    sign_create, signEditType, sign_edit, signInType, checkIn, SignInData, \
-    checktoken, SignInData, scanIn
+from ser.sign_in_record import (submitLeaveInfoType, checkLeaveInfoType,
+    sign_create, signEditType, sign_edit, signInType, checkIn, SignInData,
+    checktoken, SignInData, scanIn, pageType,get_page)
 from utils import makeResponse
 
 # 统一了路由的前缀
@@ -25,7 +25,7 @@ async def signCreate(data: dict = Depends(sign_create)):
 # 修改签到信息 2
 @router.post("/{sg_id}/edit")
 async def signEdit(sg_id: int, data: dict = Depends(sign_edit)):
-    db=signInRecordModel()
+    db = signInRecordModel()
     db.editSign(data, sg_id)
     return makeResponse(None)
 
@@ -46,15 +46,23 @@ async def signInfo(sg_id: int):
     return info
 
 
-# 查询用户存在的签到 5
-@router.get("/{username}/list")
-async def signList(username: str):
-    db = signInRecordModel()
-    info = db.getUserSign(username)
+# 查询所有的签到信息 5
+@router.get("/list")
+async def signList(pageInfo: dict = Depends(get_page)):
+    db=signInRecordModel()
+    info = db.getSignList(pageInfo)
     return info
 
 
-# 用户签到 6
+# 查询一个sg_id中的用户签到信息
+@router.get("/{sg_id}/userInfoList")
+async def signList(sg_id: int, data: dict = Depends(get_page)):
+    db = signInRecordModel()
+    info = db.getUserSign(sg_id, data)
+    return info
+
+
+# 用户签到
 @router.post("/checkIn")
 async def checkInUser(data: dict = Depends(checkIn)):
     db = signInRecordModel()
@@ -62,19 +70,19 @@ async def checkInUser(data: dict = Depends(checkIn)):
     return makeResponse(None)
 
 
-# 用户签到信息查询 7
-@router.get("/{sg_u_id}/userInfo")
-async def userInfo(sg_u_id: int):
+# 某一组中某一用户签到信息查询 7
+@router.get("/{sg_id}/{username}/userInfo")
+async def userInfo(sg_id: int, username: str):
     db = signInRecordModel()
-    info = db.getUserInfo(sg_u_id)
+    info = db.getUserInfo(sg_id, username)
     return info
 
 
 # 所有用户签到信息查询 8
-@router.get("/{sg_id}/userInfoList")
-async def get_user_info_list(sg_id: int):
+@router.get("/{group_id}/{username}/list")
+async def get_user_info_list(group_id: int, username: str, data: dict = Depends(get_page)):
     db = signInRecordModel()
-    res = db.getUserInfoList(sg_id)
+    res = db.getUserInfoList(group_id, username, data)
     return res
 
 
