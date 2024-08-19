@@ -1,13 +1,11 @@
 import copy
 import json
-import os
-import sys
 
 from sqlalchemy import Column, ForeignKey, Index, UniqueConstraint
 from sqlalchemy import create_engine
 from sqlalchemy import func
 from sqlalchemy.dialects.mysql import INTEGER, VARCHAR, DATETIME, LONGTEXT, \
-    FLOAT, BIGINT, TINYINT, BOOLEAN
+    FLOAT, BIGINT, TINYINT
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -359,8 +357,8 @@ class ScreenRecord(Base):
     # 录屏表，用于记录录屏信息
     __tablename__ = "screen_record"
 
-    # 视频id
-    v_id = Column(INTEGER, primary_key=True, nullable=False, autoincrement=True)
+    # 视频唯一凭证
+    token = Column(VARCHAR(50), nullable=False, primary_key=True, unique=True)  # 假设token应该是唯一的
 
     # 业务类型 业务ID
     bs_type = Column(INTEGER, nullable=False)
@@ -371,18 +369,13 @@ class ScreenRecord(Base):
 
     # 用户id
     u_id = Column(INTEGER, nullable=False)
-
-    # 视频唯一凭证
-    token = Column(VARCHAR(50), nullable=False, unique=True)  # 假设token应该是唯一的
+    u_name = Column(VARCHAR(10), nullable=False)
 
     # 创建时间 最后修改时间
     start_time = Column(DATETIME, nullable=False)
     modify_time = Column(DATETIME, nullable=False)
 
     cnt_frame = Column(INTEGER, nullable=False)
-
-    # bs_id = Column(INTEGER, ForeignKey('business.id'), nullable=False)
-    # u_id = Column(INTEGER, ForeignKey('user.id'), nullable=False)
 
 
 class ojSign(Base):

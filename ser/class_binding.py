@@ -24,6 +24,7 @@ class classroomType(BaseModel):
     c_seat_num: int  # 教室的座位数量
     c_description: Union[str, None]  # 教室描述
     ### c_is_available: int  # 教室是否可用
+    address: str  # 教室在哪个楼上
 
 
 class seatType(classroomType):
@@ -81,7 +82,8 @@ def createClassroom(data: classroomType):
         "c_name": data.c_name,
         "c_seat_num": data.c_seat_num,
         "c_description": data.c_description,
-        "c_is_available": 1
+        "c_is_available": 1,
+        "address": data.address
     }
 
     return data
