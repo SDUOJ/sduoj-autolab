@@ -12,10 +12,9 @@ import uuid
 
 # 学生签到信息
 class signInType(BaseModel):
-    sg_u_id: int
     username: str
     sg_id: int
-    seat_id: int
+    seat_id: int = None
     sg_user_message: str = None
 
 
@@ -36,6 +35,7 @@ class userSignIn(BaseModel):
 
 
 class signEditType(BaseModel):
+    sg_id: int
     mode: int = None
     group_id: int = None
     m_group_id: int = None
@@ -43,8 +43,6 @@ class signEditType(BaseModel):
     start_time: datetime = None
     end_time: datetime = None
     seat_bind: int = None
-    usl_id: int = None
-
 
 
 class submitLeaveInfoType(BaseModel):
@@ -67,18 +65,12 @@ class SignInData(BaseModel):
     c_id: int
     s_number: int
 
-def sign_create(data: signType):
-    if data.mode is None:
-        raise HTTPException(status_code=400, detail="签到模式未填写")
-    elif data.mode not in range(0, 4):
-        raise HTTPException(status_code=400, detail="签到模式的输入不合法")
-    elif not data.m_group_id:
-        raise HTTPException(status_code=400, detail="管理组未填写")
-    elif not data.start_time or not data.end_time:
-        raise HTTPException(status_code=400, detail="开始或结束时间未填写")
-    elif not data.seat_bind:
-        raise HTTPException(status_code=400, detail="绑定信息未填写")
+class pageType(BaseModel):
+    pageNow: int
+    pageSize: int
 
+
+def sign_create(data: signType):
     Now = datetime.now()
     data={
         "mode": data.mode,
@@ -96,19 +88,17 @@ def sign_create(data: signType):
 
 
 def sign_edit(data: signEditType):
-    if data.mode not in [0, 1, 2, 3]:
-        raise HTTPException(status=400, detail="签到模式输入不合法")
     Now = datetime.now()
     data = {
+        "sg_id":data.sg_id,
         "mode": data.mode,
         "group_id": data.m_group_id,
         "m_group_id": data.m_group_id,
         "title": data.title,
         "start_time": data.start_time,
         "end_time": data.end_time,
-        "u_gmt_modified":Now,
+        "u_gmt_modified": Now,
         "seat_bind": data.seat_bind,
-        "usl_id": data.usl_id
     }
     return data
 
@@ -121,7 +111,6 @@ def checkIn(data: signInType):
     if data.sg_user_message is None:
         sg_absence_pass = 2
     data = {
-        "sg_u_id": data.sg_u_id,
         "username": data.username,
         "sg_id": data.sg_id,
         "sg_time": Now,
@@ -132,6 +121,13 @@ def checkIn(data: signInType):
     }
     return data
 
+
+def get_page(data: pageType):
+    data = {
+    "pageSize": data.pageSize,
+    "pageNow": data.pageNow
+    }
+    return data
 
 
 def checktoken(data: usermess):
