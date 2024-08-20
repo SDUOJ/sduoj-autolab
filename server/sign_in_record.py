@@ -42,7 +42,7 @@ async def signDelete(sg_id: int):
 async def signInfo(sg_id: int):
     db = signInRecordModel()
     info = db.getSign(sg_id)
-    return info
+    return makeResponse(info)
 
 
 # 查询所有的签到信息 5
@@ -50,7 +50,7 @@ async def signInfo(sg_id: int):
 async def signList(pageSize: int = Query(10, alias="pageSize"), pageNow: int = Query(1, alias="pageNow")):
     db=signInRecordModel()
     info = db.getSignList(pageNow, pageSize)
-    return info
+    return makeResponse(info)
 
 
 # 查询一个sg_id中的用户签到信息 6
@@ -58,7 +58,7 @@ async def signList(pageSize: int = Query(10, alias="pageSize"), pageNow: int = Q
 async def signList(sg_id: int, pageSize: int = Query(10, alias="pageSize"), pageNow: int = Query(1, alias="pageNow")):
     db = signInRecordModel()
     info = db.getUserSign(sg_id, pageNow, pageSize)
-    return info
+    return makeResponse(info)
 
 
 # 某一组中某一用户签到信息查询 7
@@ -66,7 +66,7 @@ async def signList(sg_id: int, pageSize: int = Query(10, alias="pageSize"), page
 async def userInfo(sg_id: int, username: str):
     db = signInRecordModel()
     info = db.getUserInfo(sg_id, username)
-    return info
+    return makeResponse(info)
 
 
 # 用户签到 8
@@ -82,7 +82,7 @@ async def checkInUser(data: dict = Depends(checkIn)):
 async def userInfo(group_id: int, username: str):
     db = signInRecordModel()
     info = db.getOneUserInfo(group_id, username)
-    return info
+    return makeResponse(info)
 
 
 # 所有用户签到信息查询 10
@@ -90,7 +90,7 @@ async def userInfo(group_id: int, username: str):
 async def get_user_info_list(group_id: int, username: str, pageSize: int = Query(10, alias="pageSize"), pageNow: int = Query(1, alias="pageNow")):
     db = signInRecordModel()
     res = db.getUserInfoList(group_id, username, pageNow, pageSize)
-    return res
+    return makeResponse(res)
 
 
 # 用户提交请假信息 11

@@ -78,13 +78,15 @@ class signInRecordModel(dbSession):
         signInfo = self.session.query(ojSign).filter(
             ojSign.sg_id == sg_id
         ).first()
+        start_time = signInfo.start_time.strftime("%Y-%m-%d %H:%M:%S")
+        end_time = signInfo.end_time.strftime("%Y-%m-%d %H:%M:%S")
         info["mode"] = signInfo.mode
         info["group_id"] = signInfo.group_id
         info["m_group_id"] = signInfo.group_id
         info["title"] = signInfo.title
         info["seat_bind"] = signInfo.seat_bind
-        info["start_time"] = signInfo.start_time
-        info["end_time"] = signInfo.end_time
+        info["start_time"] = start_time
+        info["end_time"] = end_time
 
         return info
 
@@ -102,14 +104,16 @@ class signInRecordModel(dbSession):
         query = self.session.query(ojSign).offset(offsets).limit(pageSize).all()
 
         for obj in query:
+            start_time = obj.start_time.strftime("%Y-%m-%d %H:%M:%S")
+            end_time = obj.end_time.strftime("%Y-%m-%d %H:%M:%S")
             data = {
                 "sg_id": obj.sg_id,
                 "mode": obj.mode,
                 "group_id": obj.group_id,
                 "m_group_id": obj.m_group_id,
                 "title": obj.title,
-                "start_time": obj.start_time,
-                "end_time": obj.end_time,
+                "start_time": start_time,
+                "end_time": end_time,
                 "seat_bind": obj.seat_bind
             }
             info["rows"].append(data)
@@ -142,10 +146,11 @@ class signInRecordModel(dbSession):
             signInfo = self.session.query(ojSignUser).filter(
                 ojSignUser.sg_id == obj.sg_id
             ).first()
+            sg_time = signInfo.sg_time.strftime("%Y-%m-%d %H:%M:%S")
             data = {
                 "sg_u_id": signInfo.sg_u_id,
                 "user_name": obj.username,
-                "sg_time": obj.sg_time,
+                "sg_time": sg_time,
                 "seat_id": obj.seat_id,
                 "sg_u_message": obj.sg_user_message,
                 "sg_absence_pass": obj.sg_absence_pass
@@ -180,11 +185,12 @@ class signInRecordModel(dbSession):
             ojSignUser.username == username, ojSignUser.sg_id == sg_id
         ).all()
         for i in data:
+            sg_time = i.sg_time.strftime("%Y-%m-%d %H:%M:%S")
             temp = {
                 "sg_u_id": i.sg_id,
                 "user_name": i.username,
                 "sg_id": i.sg_id,
-                "sg_time": i.sg_time,
+                "sg_time": sg_time,
                 "seat_id": i.seat_id,
                 "sg_user_message": i.sg_user_message,
                 "sg_absence_pass": i.sg_absence_pass
@@ -213,13 +219,16 @@ class signInRecordModel(dbSession):
             get_sign = self.session.query(ojSign).filter(
                 ojSign.sg_id == i.sg_id
             ).first()
+            start_time = get_sign.start_time.strftime("%Y-%m-%d %H:%M:%S")
+            end_time = get_sign.end_time.strftime("%Y-%m-%d %H:%M:%S")
+            sg_time = i.sg_time.strftime("%Y-%m-%d %H:%M:%S")
             info = {
                 "sg_u_id": 3,
                 "sg_id": i.sg_id,
                 "mode":get_sign.mode,
-                "startime": get_sign.start_time,
-                "endtime": get_sign.end_time,
-                "sg_time": i.sg_time,
+                "startime": start_time,
+                "endtime": end_time,
+                "sg_time": sg_time,
                 "seat_id": i.seat_id,
                 "sg_user_message": i.sg_user_message,
                 "sg_absence_pass": i.sg_absence_pass
@@ -298,10 +307,11 @@ class signInRecordModel(dbSession):
             query = self.session.query(ojSign).filter(
                 ojSign.sg_id == obj.sg_id
             ).first()
+            sg_time = obj.sg_time.strftime("%Y-%m-%d %H:%M:%S")
             data = {
                 "sg_u_id": obj.sg_u_id,
                 "sg_id": obj.sg_id,
-                "sg_time": obj.sg_time,
+                "sg_time": sg_time,
                 "seat_id": obj.seat_id
             }
             res["data"].append(data)
