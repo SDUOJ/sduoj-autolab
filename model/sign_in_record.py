@@ -91,16 +91,16 @@ class signInRecordModel(dbSession):
 
 
     # 查询所有的签到信息
-    def getSignList(self, pageInfo: dict):
+    def getSignList(self, pageNow: int, pageSize: int):
         info = {"rows": []}
         query = self.session.query(func.count(ojSign.sg_id))
         datanum = query.scalar()
         if datanum == 0:
             return None
         info["totalNums"] = datanum
-        info["totalPages"] = datanum // pageInfo["pageSize"]
-        offsets = (pageInfo["pageNow"] - 1) * pageInfo["pageSize"]
-        query = self.session.query(ojSign).offset(offsets).limit(pageInfo["pageSize"]).all()
+        info["totalPages"] = datanum // pageSize
+        offsets = (pageNow - 1) * pageSize
+        query = self.session.query(ojSign).offset(offsets).limit(pageSize).all()
 
         for obj in query:
             data = {
@@ -117,8 +117,9 @@ class signInRecordModel(dbSession):
 
         return info
 
+
     # 查询一个签到中的所有签到用户 006
-    def getUserSign(self, sg_id: int, data: dict):
+    def getUserSign(self, sg_id: int, pageNow: int , pageSize: int):
         info = {"rows": []}
         # 得到数据量
         query = self.session.query(func.count(ojSignUser.sg_id)).filter(
@@ -127,23 +128,23 @@ class signInRecordModel(dbSession):
         datanum = query.scalar()
         info["totalNums"] = datanum
         # 得到页数
-        totalpage = datanum // data["pageSize"]
+        totalpage = datanum // pageSize
         info["totalPages"] = totalpage
 
         # 得到相关签到数据集
         query = self.session.query(ojSignUser).filter(
             ojSignUser.sg_id == sg_id
         ).all()
-        offets = (data["pageNow"] - 1) * data["pageSize"]
+        offets = (pageNow - 1) * pageSize
         begin = 0
         getinfonum = 1
-        pagesize = data["pageSize"]
+        pagesize = pageSize
         for obj in query:
             signInfo = self.session.query(ojSignUser).filter(
                 ojSignUser.sg_id == obj.sg_id
             ).first()
             data = {
-                "sg_u_id": obj.sg_id,
+                "sg_u_id": signInfo.sg_u_id,
                 "user_name": obj.username,
                 "sg_time": obj.sg_time,
                 "seat_id": obj.seat_id,
@@ -191,7 +192,6 @@ class signInRecordModel(dbSession):
             }
             info["data"].append(temp)
         return info
-
 
 
     # 所有用户签到信息查询
@@ -286,6 +286,25 @@ class signInRecordModel(dbSession):
         self.session.commit()
 
 
+    def getOneUserInfo(self, group_id:int, username: str):
+        res = {"data": []}
+        info = self.session.query(ojSignUser).join(ojSign).filter(
+            ojSignUser.username == username, ojSign.group_id == group_id
+        ).all()
 
+        if res is None:
+            return None
 
+        for obj in info:
+            query = self.session.query(ojSign).filter(
+                ojSign.sg_id == obj.sg_id
+            ).first()
+            data = {
+                "sg_u_id": obj.sg_u_id,
+                "sg_id": obj.sg_id,
+                "sg_time": obj.sg_time,
+                "seat_id": obj.seat_id
+            }
+            res["data"].append(data)
 
+        return res
