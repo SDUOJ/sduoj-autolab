@@ -2,11 +2,11 @@ from fastapi import APIRouter, Depends,Query
 
 from model.sign_in_record import signInRecordModel
 from ser.sign_in_record import (submitLeaveInfoType, checkLeaveInfoType,
-    sign_create, signEditType, sign_edit, signInType, checkIn, SignInData,
-    checktoken, SignInData, scanIn, pageType,get_page)
+    sign_create, signEditType, sign_edit, signInType, checkIn,
+    checktoken, SignInData, scanIn, pageType, get_page)
 from utils import makeResponse
 
-# 统一了路由的前缀
+
 router = APIRouter(
     #prefix="/sign"
 )
@@ -63,7 +63,7 @@ async def signList(sg_id: int, pageSize: int = Query(10, alias="pageSize"), page
 
 
 # 某一组中某一用户签到信息查询 7
-@router.get("/userSign/{sg_id}/{username}/userInfo")
+@router.get("/sign/{sg_id}/{username}/userInfo")
 async def userInfo(sg_id: int, username: str):
     db = signInRecordModel()
     info = db.getUserInfo(sg_id, username)
@@ -78,8 +78,8 @@ async def checkInUser(data: dict = Depends(checkIn)):
     return makeResponse(None)
 
 
-# 用户单个签到信息查询
-@router.get("/userSign/{group_id}/{username}/List")
+# 用户单个签到信息查询 9
+@router.get("/userSign/{group_id}/{username}/userInfo")
 async def userInfo(group_id: int, username: str):
     db = signInRecordModel()
     info = db.getOneUserInfo(group_id, username)
@@ -88,13 +88,13 @@ async def userInfo(group_id: int, username: str):
 
 # 所有用户签到信息查询 10
 @router.get("/userSign/{group_id}/{username}/List")
-async def get_user_info_list(group_id: int, username: str, data: dict = Depends(get_page)):
+async def get_user_info_list(group_id: int, username: str, pageSize: int = Query(10, alias="pageSize"), pageNow: int = Query(1, alias="pageNow")):
     db = signInRecordModel()
-    res = db.getUserInfoList(group_id, username, data)
+    res = db.getUserInfoList(group_id, username, pageNow, pageSize)
     return res
 
 
-# 用户提交请假信息11
+# 用户提交请假信息 11
 @router.post("/userSign/submit")
 async def submit_leave_info(data: submitLeaveInfoType):
     db = signInRecordModel()
