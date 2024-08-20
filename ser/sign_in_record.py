@@ -1,7 +1,6 @@
 from datetime import datetime
 from http.client import HTTPException
 from typing import List, Optional, Union
-
 from pydantic import BaseModel
 from sqlalchemy.orm import session
 from db import ojClass, dbSession,ojSeat
@@ -56,14 +55,17 @@ class checkLeaveInfoType(BaseModel):
     sg_u_id: int
     sg_absence_pass: int = None
 
+
 class usermess(BaseModel):
     username: str
     sg_id: str
+
 
 class SignInData(BaseModel):
     token: str
     c_id: int
     s_number: int
+
 
 class pageType(BaseModel):
     pageNow: int
@@ -107,9 +109,9 @@ def checkIn(data: signInType):
     Now = datetime.now()
     Token = uuid.uuid4().hex
     sg_absence_pass = None
-    #处理请假信息  # 1 通过  0 未通过  none 审批中  2 无请假
+    #处理请假信息  # 1 通过  none 审批中  2 不通过
     if data.sg_user_message is None:
-        sg_absence_pass = 2
+        return None
     data = {
         "username": data.username,
         "sg_id": data.sg_id,
