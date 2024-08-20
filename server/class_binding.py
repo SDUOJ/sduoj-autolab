@@ -91,3 +91,11 @@ async def search_s_ip(data: dict):
     db = classBindingModel()
     res = db.search_s_ip(data)
     return res
+
+
+# 查询教室名是否已存在
+@router.get("/isExist")
+async def c_name_is_exist(data: dict):
+    db = classBindingModel()
+    res = db.c_name_is_exist(data)
+    return res

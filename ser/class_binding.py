@@ -63,14 +63,20 @@ class pageType(BaseModel):
     pageSize: int
 
 
-def createClassroom(data: classroomType):
+def createClassroom(data: dict):
     global c_id_generator
 
-    if not data.c_name:
+    c_name = data.get("c_name")
+    c_seat_num = data.get("c_seat_num")
+    c_description = data.get("c_description")
+    address = data.get("address")
+    no_use_seat = data.get("s_number", [])
+
+    if not c_name:
         raise HTTPException(status_code=400, detail="教室名称重复或为空")
-    elif not data.c_seat_num:
+    elif not c_seat_num:
         raise HTTPException(status_code=400, detail="教室座位数量应为正整数")
-    elif not data.c_description:
+    elif not c_description:
         raise HTTPException(status_code=400, detail="应写入教室描述")
 
     temp = classBindingModel()
@@ -79,11 +85,12 @@ def createClassroom(data: classroomType):
     # c_available 默认为 True
     data = {
         "c_id": c_id,
-        "c_name": data.c_name,
-        "c_seat_num": data.c_seat_num,
-        "c_description": data.c_description,
+        "c_name": c_name,
+        "c_seat_num": c_seat_num,
+        "c_description": c_description,
         "c_is_available": 1,
-        "address": data.address
+        "address": address,
+        "no_use_seat": no_use_seat
     }
 
     return data
