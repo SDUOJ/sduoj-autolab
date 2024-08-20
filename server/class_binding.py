@@ -91,3 +91,27 @@ async def search_s_ip(data: dict):
     db = classBindingModel()
     res = db.search_s_ip(data)
     return res
+
+
+# 查询教室名是否已存在
+@router.get("/isExist")
+async def c_name_is_exist(data: dict):
+    db = classBindingModel()
+    res = db.c_name_is_exist(data)
+    return res
+
+
+# 查询名单的助教
+@router.get("/seatList/{usl_id}/listTAInfo")
+async def check_TA_info(usl_id: int):
+    db = classBindingModel()
+    res = db.check_TA_info(usl_id)
+    return res
+
+
+# 查询整个名单的用户，教室，座号
+@router.get("/seatList/{usl_id}/checkAllListInfo")
+async def check_list_info(usl_id: int):
+    db = classBindingModel()
+    res = db.check_list_info(usl_id)
+    return res
