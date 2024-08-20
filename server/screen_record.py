@@ -3,7 +3,7 @@ import shutil
 from datetime import datetime
 from io import BytesIO
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from fastapi import APIRouter, Form, File, UploadFile
 from fastapi.responses import FileResponse
 from moviepy.editor import ImageSequenceClip
@@ -35,7 +35,7 @@ async def addRecord(data: newRecord):
     datas = {
         'bs_type': res.type,
         'bs_id': data.bs_id,
-        'v_path': "D:\\SDUOJ\\ScreenRecord\\" + data.u_name + "_" + str(datetime.now().strftime("%Y%m%d%H%M%S")) + "\\",
+        'v_path': "D:\\SDUOJ\\ScreenRecord\\" + str(data.bs_id)+ "_" + res.name + "\\" + data.u_name + "_" + str(datetime.now().strftime("%Y%m%d%H%M%S")) + "\\",
         'u_id': data.u_id,
         'u_name': data.u_name,
         'token': data.token,
@@ -60,9 +60,6 @@ async def addFrame(token: str = Form(...), pic: UploadFile = File(...)):
     path = result.v_path
     cnt = result.cnt_frame
 
-    if cnt == -1:
-        return NormalResponse(code=0, message="视频正在导出", data="视频正在导出")
-
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
     image_bytes = await pic.read()
@@ -71,12 +68,21 @@ async def addFrame(token: str = Form(...), pic: UploadFile = File(...)):
     target_size = (1280, 720)
     image = image.resize(target_size)
 
-    frame_filename = f"{cnt}.jpg"
-    frame_path = os.path.join(os.path.dirname(path), frame_filename)  # 确保路径是文件夹路径，不是文件路径
+    if cnt == -1:
+        return NormalResponse(code=0, message="视频正在导出", data="视频正在导出")
+    else:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        draw = ImageDraw.Draw(image)
+        font = ImageFont.load_default()
+        draw.text((target_size[0] - 180, 10), timestamp, font=font, fill=(255, 255, 255))
+
+    frame_filename = f"{cnt}.jpg" if cnt != -1 else "exporting.jpg"
+    frame_path = os.path.join(os.path.dirname(path), frame_filename)
 
     image.save(frame_path)
 
-    db.add_frame_by_token(token, {'modify_time': datetime.now(), 'cnt_frame': cnt + 1})
+    if cnt != -1:
+        db.add_frame_by_token(token, {'modify_time': datetime.now(), 'cnt_frame': cnt + 1})
 
     print(f"Frame added successfully: {frame_path}")
     return NormalResponse(code=0, message="追加帧成功", data="追加帧成功")
@@ -87,8 +93,6 @@ async def addFrame(token: str = Form(...), pic: UploadFile = File(...)):
 async def getPSList():
     db = screenRecordModel()
     result = db.get_ps_list()
-    if not result:
-        return NormalResponse(code=0, message="无录屏题单记录", data="无录屏题单记录")
 
     ps_list = [
         PSList(
