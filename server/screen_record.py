@@ -181,7 +181,6 @@ async def deleteVideo(token: str):
     db.delete_by_token(token)
 
     if os.path.isdir(path):
-        # 使用shutil.rmtree来删除整个文件夹
         shutil.rmtree(path)
 
     return NormalResponse(code=0, message="视频记录已删除", data="视频记录已删除")
