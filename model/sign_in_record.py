@@ -5,7 +5,6 @@ from sqlalchemy import and_, func
 
 from db import dbSession, ojSignUser, ojSign, ojSeat
 
-
 # /model/sign_in_record.py-------------------------
 class signInRecordModel(dbSession):
 

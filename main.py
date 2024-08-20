@@ -35,6 +35,7 @@ app.add_middleware(
     allow_headers=["*"],  # 允许所有 HTTP 头
 )
 
+
 @app.exception_handler(HTTPException)  # 自定义HttpRequest 请求异常
 async def http_exception_handle(request, exc):
     response = JSONResponse({

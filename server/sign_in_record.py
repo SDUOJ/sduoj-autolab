@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends,Query
-
 from model.sign_in_record import signInRecordModel
 from ser.sign_in_record import (submitLeaveInfoType, checkLeaveInfoType,
     sign_create, signEditType, sign_edit, signInType, checkIn,
