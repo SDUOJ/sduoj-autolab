@@ -85,8 +85,9 @@ async def userInfo(group_id: int, username: str):
 
 
 # 所有用户签到信息查询 10
-@router.get("/userSign/{group_id}/{username}/List")
-async def get_user_info_list(group_id: int, username: str, pageSize: int = Query(10, alias="pageSize"), pageNow: int = Query(1, alias="pageNow")):
+@router.get("/userSign/List")
+async def get_user_info_list(group_id: int = Query(0, alias="group_id"), username: str = Query("none", alias="username"),
+                            pageSize: int = Query(10, alias="pageSize"), pageNow: int = Query(1, alias="pageNow")):
     db = signInRecordModel()
     res = db.getUserInfoList(group_id, username, pageNow, pageSize)
     return makeResponse(res)
