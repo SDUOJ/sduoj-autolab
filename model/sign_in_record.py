@@ -5,7 +5,6 @@ from sqlalchemy import and_, func
 
 from db import dbSession, ojSignUser, ojSign, ojSeat
 
-
 # /model/sign_in_record.py-------------------------
 class signInRecordModel(dbSession):
 
@@ -195,7 +194,7 @@ class signInRecordModel(dbSession):
 
 
     # 所有用户签到信息查询
-    def getUserInfoList(self, group_id: int, username: str, page: dict):
+    def getUserInfoList(self, group_id: int, username: str, pageNow:int, pageSize:int):
         res = {"rows": []}
         q = self.session.query(ojSignUser, ojSign).join(ojSign).filter(
              ojSignUser.username == username, ojSign.group_id == group_id
@@ -203,23 +202,23 @@ class signInRecordModel(dbSession):
         datanum = q.count()
         res["totalNums"] = datanum
         # 得到页数
-        totalpage = datanum // page["pageSize"]
+        totalpage = datanum // pageSize
         res["totalPages"] = totalpage
 
         # 得到相关数据
         q = self.session.query(ojSignUser).join(ojSign).filter(
             ojSignUser.username == username, ojSign.group_id == group_id
-        ).offset((page["pageNow"]-1) * page["pageSize"]).limit(page["pageSize"]).all()
+        ).offset((pageNow-1) * pageSize).limit(pageSize).all()
         for i in q:
-            get_time = self.session.query(ojSign).filter(
+            get_sign = self.session.query(ojSign).filter(
                 ojSign.sg_id == i.sg_id
             ).first()
             info = {
                 "sg_u_id": 3,
-                "user_name": i.username,
                 "sg_id": i.sg_id,
-                "startime": get_time.start_time,
-                "endtime": get_time.end_time,
+                "mode":get_sign.mode,
+                "startime": get_sign.start_time,
+                "endtime": get_sign.end_time,
                 "sg_time": i.sg_time,
                 "seat_id": i.seat_id,
                 "sg_user_message": i.sg_user_message,
