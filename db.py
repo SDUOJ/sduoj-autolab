@@ -343,8 +343,11 @@ class ojClassManageUser(Base):
     # 教室助教绑定表，用于记录教室助教的绑定信息
     __tablename__ = 'oj_class_manage_user'
 
-    # 助教姓名,主键
-    TA_name = Column(VARCHAR(20), primary_key=True, nullable=False)
+    # 助教id,主键
+    TA_id = Column(INTEGER, primary_key=True, nullable=False)
+
+    # 助教姓名
+    TA_name = Column(VARCHAR(20), nullable=False)
 
     # 学生座位名单id,外键
     usl_id = Column(BIGINT, ForeignKey("oj_user_seat_list.usl_id"), nullable=False)

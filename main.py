@@ -8,7 +8,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from server import answer_sheet, objective, \
-    problem_set, problem_group, subjective, subjective_judge, summary, screen_record
+    problem_set, problem_group, subjective, subjective_judge, summary, screen_record, sign_in_record, class_binding
 from utilsTime import getMsTime
 
 
@@ -21,9 +21,11 @@ app.include_router(subjective.router)
 app.include_router(subjective_judge.router)
 app.include_router(summary.router)
 app.include_router(screen_record.router)
+app.include_router(sign_in_record.router)
+app.include_router(class_binding.router)
 
 origins = [
-    "http://test.sduoj.com:3000"
+    "*"
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -32,6 +34,7 @@ app.add_middleware(
     allow_methods=["*"],  # 允许所有 HTTP 方法
     allow_headers=["*"],  # 允许所有 HTTP 头
 )
+
 
 @app.exception_handler(HTTPException)  # 自定义HttpRequest 请求异常
 async def http_exception_handle(request, exc):
