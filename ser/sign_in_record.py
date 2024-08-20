@@ -141,6 +141,7 @@ def checktoken(data: usermess):
     }
     return data
 
+
 def scanIn(data: SignInData):
     Now = datetime.now()
     data = {
