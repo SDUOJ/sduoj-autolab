@@ -293,7 +293,6 @@ class signInRecordModel(dbSession):
         ).update(datas)
         self.session.commit()
 
-
     def getOneUserInfo(self, group_id:int, username: str):
         res = {"data": []}
         info = self.session.query(ojSignUser).join(ojSign).filter(

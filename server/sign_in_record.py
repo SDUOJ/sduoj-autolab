@@ -92,7 +92,6 @@ async def get_user_info_list(group_id: int, username: str, pageSize: int = Query
     return makeResponse(res)
 
 
-
 # 用户提交请假信息 11
 @router.post("/userSign/submit")
 async def submit_leave_info(data: submitLeaveInfoType):
