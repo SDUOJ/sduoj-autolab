@@ -15,13 +15,15 @@ class IDGenerator:
         return current_id
 
 
-# s_id自增器
+# id自增器
 s_id_generator = IDGenerator()
+TA_id_generator = IDGenerator()
 
 
 # /model/class_binding.py ------------------------------------------
 class classBindingModel(dbSession):
     global s_id_generator
+    global TA_id_generator
 
     def get_c_id_available(self, c_id):
         result = self.session.query(ojClass).filter(
@@ -68,12 +70,16 @@ class classBindingModel(dbSession):
         return ojClassUser_id
 
     # 新建教室和座位
-    # input: c_name, c_seat_num, c_description ,address
+    # input: c_name, c_seat_num, c_description ,address ,[不可用的s_number]
     def classroom_create(self, data: dict):
         c_id = data.get("c_id")
         c_seat_num = data.get("c_seat_num")
+        # 获取不可用座位
+        no_use_seat = data.get("no_use_seat", [])
 
         data = self.jsonDumps(data, ["c_id", "c_name", "c_seat_num", "c_description", "c_is_available", "address"])
+        data.pop("no_use_seat", None)
+
         self.session.add(ojClass(**data))
         self.session.flush()
         self.session.commit()
@@ -85,7 +91,7 @@ class classBindingModel(dbSession):
                 "s_id": s_id,
                 "s_number": i,
                 "c_id": c_id,
-                "s_tag": 0,
+                "s_tag": 1 if i not in no_use_seat else 0,
                 "s_ip": None
             }
             seatData = self.jsonDumps(seatData, ["s_id", "s_number", "c_id", "s_tag", "s_ip"])
@@ -142,7 +148,7 @@ class classBindingModel(dbSession):
         return result.s_number, result.c_id
 
     # 修改教室信息(可更新教室描述，座位状态)
-    # input: c_name，c_description, c_is_available, s_number, s_tag
+    # input: c_name，c_description, c_is_available,[不可用的s_number]
     def classroom_edit(self, data: dict):
         # 所有得到的信息取出来
         c_name = data.get("c_name")
@@ -150,12 +156,16 @@ class classBindingModel(dbSession):
         c_description = data.get("c_description")
         c_is_available = data.get("c_is_available")
 
-        s_number = data.get("s_number")
-
-        c_id = self.get_c_id_by_c_name(c_name)
-        s_id = self.get_s_id_by_s_number_and_c_id(s_number, c_id) if s_number is not None else None
+        # 取出不可用的座位
+        no_use_seat = data.get("s_number", [])
 
         update_cdata = {}  # 有关教室的更新
+        update_sdata = {"no_use_seat_id": []}  # 有关座位的更新
+
+        c_id = self.get_c_id_by_c_name(c_name)
+        for i in no_use_seat:
+            s_id = self.get_s_id_by_s_number_and_c_id(i, c_id) if i is not None else None
+            update_sdata["no_use_seat_id"].append(s_id)
 
         if c_name is not None:
 
@@ -171,6 +181,13 @@ class classBindingModel(dbSession):
                 ojClass.c_id == c_id
             ).update(update_cdata)
             self.session.commit()
+        if update_sdata:
+            for s_id in update_sdata["no_use_seat_id"]:
+                if s_id is not None:
+                    self.session.query(ojSeat).filter(
+                        ojSeat.s_id == s_id
+                    ).update({"s_tag": 0})
+                    self.session.commit()
 
     # 获取当前教室信息
     # input:c_name, usl_id
@@ -234,21 +251,26 @@ class classBindingModel(dbSession):
         # 求总页数
         totalPage = totalNum // pageSize
         res["totalPage"] = totalPage
-        # 列出所有符合条件的数据
-        qc = self.session.query(ojClass).filter(
-            ojClass.c_is_available == 1
-        ).all()
 
         query = self.session.query(ojClass).filter(
             ojClass.c_is_available == 1
         ).offset((pageNow - 1) * pageSize).limit(pageSize).all()
 
         for obj in query:
+            # 输出的s_number表示不可用的座位
             data = {
                 "c_id": obj.c_id,
                 "c_seat_num": obj.c_seat_num,
-                "c_is_available": obj.c_is_available
+                "c_description": obj.c_description,
+                "address": obj.address,
+                "s_number": []
             }
+            qc = self.session.query(ojSeat).filter(
+                ojSeat.c_id == obj.c_id
+            ).all()
+            for i in qc:
+                if i.s_tag == 0:
+                    data["s_number"].append(i.s_number)
             res["data"].append(data)
 
         return res
@@ -261,44 +283,21 @@ class classBindingModel(dbSession):
         self.session.flush()
         self.session.commit()
 
-    # 编辑用户座位名单和教室座位绑定表(修改username)
-    # input:name, groupId, username, c_name, s_number, s_tag
+    # 编辑用户座位名单和教室座位绑定表
+    # input:usl_id, name, groupId
     def edit_seat_list(self, data: dict):
+        usl_id = data.get("usl_id")
         name = data.get("name")
         groupId = data.get("groupId")
 
-        username = data.get("username")
-
-        c_name = data.get("c_name")
-        s_number = data.get("s_number")
-
-        s_tag = data.get("s_tag")
-        if s_tag == 0:
-            raise HTTPException(status_code=400, detail="此座位不可用")
-
-        # 查usl_id明确要改哪个名单
-        q_usl_id = self.session.query(ojUserSeatList).filter(
-            and_(ojUserSeatList.name == name, ojUserSeatList.groupId == groupId)
-        )
-        usl_id = q_usl_id.first().usl_id
-
-        # 查c_id
-        q_c_id = self.session.query(ojClass).filter(
-            ojClass.c_name == c_name
-        )
-        c_id = q_c_id.first().c_id
-
-        # 查s_id明确要改哪个座位
-        q_s_id = self.session.query(ojSeat).filter(
-            and_(ojSeat.c_id == c_id, ojSeat.s_number == s_number)
-        )
-        s_id = q_s_id.first().s_id
-
-        # 修改对应座位上的username
-        update_data = {"username": username}
-        self.session.query(ojClassUser).filter(
-            and_(ojClassUser.s_id == s_id, ojClassUser.usl_id == usl_id)
-        ).update(update_data)
+        data = {
+            "usl_id": usl_id,
+            "name": name,
+            "groupId": groupId
+        }
+        self.session.query(ojUserSeatList).filter(
+            ojUserSeatList.usl_id == usl_id
+        ).update(data)
         self.session.commit()
 
     # 查询用户座位名单的列表user_seat_list
@@ -402,11 +401,12 @@ class classBindingModel(dbSession):
             c_id = q_c_id_s_number.c_id
             s_number = q_c_id_s_number.s_number
 
-            # 查询c_name
+            # 查询c_name和address
             q_c_name = self.session.query(ojClass).filter(
                 ojClass.c_id == c_id
             ).first()
             c_name = q_c_name.c_name if q_c_name.c_name is not None else None
+            address = q_c_name.address
 
             # 查询TA_name
             q_TA_name = self.session.query(ojClassManageUser).filter(
@@ -417,7 +417,8 @@ class classBindingModel(dbSession):
                 "username": username,
                 "c_name": c_name,
                 "s_number": s_number,
-                "TA_name": TA_name
+                "TA_name": TA_name,
+                "address": address
             }
             res["data"].append(data)
 
@@ -447,3 +448,73 @@ class classBindingModel(dbSession):
         )
         s_ip = q_ip.first().s_ip
         return s_ip
+
+    # 查询教室名是否已存在
+    def c_name_is_exist(self, data: dict):
+        c_name = data.get("c_name")
+        query = self.session.query(ojClass).filter()
+        for i in query:
+            if i.c_name == c_name:
+                return True
+
+        return False
+
+    # 查询名单的助教
+    def check_TA_info(self, usl_id: int):
+        query = self.session.query(ojClassManageUser).filter(
+            ojClassManageUser.usl_id == usl_id
+        )
+        TA_id = query.first().TA_id
+        TA_name = query.first().TA_name
+
+        c_id = query.first().c_id
+        c_name = self.session.query(ojClass).filter(
+            ojClass.c_id == c_id
+        ).first().c_name
+        address = self.session.query(ojClass).filter(
+            ojClass.c_id == c_id
+        ).first().address
+        data = {
+            "TA_id": TA_id,
+            "TA_name": TA_name,
+            "c_name": c_name,
+            "address": address
+        }
+        return data
+
+    # 查询整个名单的用户，教室，座号
+    def check_list_info(self, usl_id: int):
+        query = self.session.query(ojClassUser).filter(
+            ojClassUser.usl_id == usl_id
+        )
+        tempSid = query.first().s_id
+
+        c_id = self.session.query(ojSeat).filter(
+            ojSeat.s_id == tempSid
+        ).first().c_id
+        c_name = self.session.query(ojClass).filter(
+            ojClass.c_id == c_id
+        ).first().c_name
+
+        q_id = self.session.query(ojClassUser).filter(
+            ojClassUser.usl_id == usl_id
+        )
+        Id = q_id.first().id
+        username = q_id.first().username
+        s_id = q_id.first().s_id
+
+        s_number = self.session.query(ojSeat).filter(
+            ojSeat.s_id == s_id
+        ).first().s_number
+        data = {
+            "id": Id,
+            "username": username,
+            "c_name": c_name,
+            "s_number": s_number
+        }
+        return data
+
+
+
+
+

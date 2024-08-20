@@ -8,7 +8,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from server import answer_sheet, objective, \
-    problem_set, problem_group, subjective, subjective_judge, summary, screen_record,sign_in_record
+    problem_set, problem_group, subjective, subjective_judge, summary, screen_record, sign_in_record, class_binding
 from utilsTime import getMsTime
 
 
@@ -22,7 +22,7 @@ app.include_router(subjective_judge.router)
 app.include_router(summary.router)
 app.include_router(screen_record.router)
 app.include_router(sign_in_record.router)
-
+app.include_router(class_binding.router)
 
 origins = [
     "*"
