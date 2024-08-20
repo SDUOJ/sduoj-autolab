@@ -1,7 +1,6 @@
 from datetime import datetime
 from http.client import HTTPException
 from typing import List, Optional, Union
-
 from pydantic import BaseModel
 from sqlalchemy.orm import session
 from db import ojClass, dbSession,ojSeat
