@@ -23,7 +23,7 @@ app.include_router(summary.router)
 app.include_router(screen_record.router)
 
 origins = [
-    "*"
+    "http://test.sduoj.com:3000"
 ]
 app.add_middleware(
     CORSMiddleware,
