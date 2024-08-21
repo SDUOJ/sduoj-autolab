@@ -28,7 +28,7 @@ async def edit_classroom(data: dict = Depends(editClassroom)):
     return makeResponse(None)
 
 
-# 获取当前教室信息
+# 获取当前教室信息（小程序）
 @router.get("/classroomInfo")
 async def get_classroom_info(c_name: str):
     db = classBindingModel()

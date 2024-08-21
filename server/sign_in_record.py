@@ -137,7 +137,7 @@ async def check_token(data: dict = Depends(checktoken)):
 
 
 # 传递二维码信息 14
-@router.post("sign/checkAdmin")
+@router.post("/sign/checkAdmin")
 async def check_admin(data: dict = Depends(scanIn)):
     db = signInRecordModel()
     db.checktoken(data)

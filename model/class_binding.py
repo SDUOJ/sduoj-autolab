@@ -193,7 +193,7 @@ class classBindingModel(dbSession):
     # input:c_name, usl_id
     def get_classroom_info(self, data: dict):
         c_name = data.get("c_name")
-        usl_id = data.get("usl_id")
+        # usl_id = data.get("usl_id")
         c_id = self.get_c_id_by_c_name(c_name)
         data = {}
         # 查出指定教室的全部信息
@@ -214,23 +214,23 @@ class classBindingModel(dbSession):
         qs = self.session.query(ojSeat).filter(
             ojSeat.c_id == c_id
         ).all()
-        s_id = [obj.s_id for obj in qs]
-
-        # 查询对应座位的username
-        data["usl"] = []
-        for i in s_id:
-            username = None
-            # 判断是否是对应题单的数据
-            qlist = self.session.query(ojClassUser).filter(
-                ojClassUser.s_id == i and ojClassUser.usl_id == usl_id
-            )
-            user_obj = qlist.first()
-
-            if user_obj:
-                username = user_obj.username  # 访问对象的 username 属性
-
-            s_number, c_id = self.get_s_number_and_c_id_by_s_id(i)
-            data["usl"].append([username, s_number])
+        s_number = [obj.s_number for obj in qs if obj.s_tag == 1]
+        data["s_number"] = s_number
+        # # 查询对应座位的username
+        # data["usl"] = []
+        # for i in s_id:
+        #     username = None
+        #     # 判断是否是对应题单的数据
+        #     qlist = self.session.query(ojClassUser).filter(
+        #         ojClassUser.s_id == i and ojClassUser.usl_id == usl_id
+        #     )
+        #     user_obj = qlist.first()
+        #
+        #     if user_obj:
+        #         username = user_obj.username  # 访问对象的 username 属性
+        #
+        #     s_number, c_id = self.get_s_number_and_c_id_by_s_id(i)
+        #     data["usl"].append([username, s_number])
 
         return data
 
@@ -243,6 +243,10 @@ class classBindingModel(dbSession):
             ojClass.c_is_available == 1
         )
         totalNum = query.scalar()
+
+        if totalNum == 0:
+            return HTTPException(status_code=400, detail="没有可用教室")
+
         res["totalNum"] = totalNum
         if pageNow is None:
             pageNow = 1
@@ -260,6 +264,7 @@ class classBindingModel(dbSession):
             # 输出的s_number表示不可用的座位
             data = {
                 "c_id": obj.c_id,
+                "c_name": obj.c_name,
                 "c_seat_num": obj.c_seat_num,
                 "c_description": obj.c_description,
                 "address": obj.address,
