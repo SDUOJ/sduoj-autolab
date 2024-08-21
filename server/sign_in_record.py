@@ -42,7 +42,7 @@ async def signDelete(sg_id: int):
 async def signInfo(sg_id: int):
     db = signInRecordModel()
     info = db.getSign(sg_id)
-    return info
+    return makeResponse(info)
 
 
 # 查询所有的签到信息 5
@@ -50,7 +50,7 @@ async def signInfo(sg_id: int):
 async def signList(pageSize: int = Query(10, alias="pageSize"), pageNow: int = Query(1, alias="pageNow")):
     db=signInRecordModel()
     info = db.getSignList(pageNow, pageSize)
-    return info
+    return makeResponse(info)
 
 
 # 查询一个sg_id中的用户签到信息 6
@@ -58,7 +58,7 @@ async def signList(pageSize: int = Query(10, alias="pageSize"), pageNow: int = Q
 async def signList(sg_id: int, pageSize: int = Query(10, alias="pageSize"), pageNow: int = Query(1, alias="pageNow")):
     db = signInRecordModel()
     info = db.getUserSign(sg_id, pageNow, pageSize)
-    return info
+    return makeResponse(info)
 
 
 # 某一组中某一用户签到信息查询 7
@@ -66,7 +66,8 @@ async def signList(sg_id: int, pageSize: int = Query(10, alias="pageSize"), page
 async def userInfo(sg_id: int, username: str):
     db = signInRecordModel()
     info = db.getUserInfo(sg_id, username)
-    return info
+    return makeResponse(info)
+
 
 # 用户签到 8
 @router.post("/userSign/checkIn")
@@ -81,16 +82,16 @@ async def checkInUser(data: dict = Depends(checkIn)):
 async def userInfo(group_id: int, username: str):
     db = signInRecordModel()
     info = db.getOneUserInfo(group_id, username)
-    return info
+    return makeResponse(info)
 
 
 # 所有用户签到信息查询 10
-@router.get("/userSign/{group_id}/{username}/List")
-async def get_user_info_list(group_id: int, username: str, pageSize: int = Query(10, alias="pageSize"), pageNow: int = Query(1, alias="pageNow")):
+@router.get("/userSign/List")
+async def get_user_info_list(group_id: int = Query(0, alias="group_id"), username: str = Query("none", alias="username"),
+                            pageSize: int = Query(10, alias="pageSize"), pageNow: int = Query(1, alias="pageNow")):
     db = signInRecordModel()
     res = db.getUserInfoList(group_id, username, pageNow, pageSize)
-    return res
-
+    return makeResponse(res)
 
 
 # 用户提交请假信息 11
@@ -126,7 +127,7 @@ async def delete_leave_info(sg_u_id: int):
     return makeResponse(None)
 
 
-# 返回token 14
+# 返回token
 @router.post("/sign/returnToken")
 async def check_token(data: dict = Depends(checktoken)):
     db = signInRecordModel()
@@ -135,13 +136,22 @@ async def check_token(data: dict = Depends(checktoken)):
     return data["token"]
 
 
-# 传递二维码信息 15
+# 传递二维码信息 14
 @router.post("sign/checkAdmin")
 async def check_admin(data: dict = Depends(scanIn)):
     db = signInRecordModel()
     db.checktoken(data)
 
     return makeResponse(None)
+
+
+# 小程序端得到所有签到的title 15
+@router.get("/sign/weChatSignList")
+async def weChatSignList():
+    db = signInRecordModel()
+    info = db.getSignListForWeChat()
+    return makeResponse(info)
+
 
 
 
