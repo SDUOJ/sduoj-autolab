@@ -68,6 +68,7 @@ async def userInfo(sg_id: int, username: str):
     info = db.getUserInfo(sg_id, username)
     return makeResponse(info)
 
+
 # 用户签到 8
 @router.post("/userSign/checkIn")
 async def checkInUser(data: dict = Depends(checkIn)):

@@ -95,6 +95,7 @@ def sign_create(data: signType):
 def sign_edit(data: signEditType):
     Now = datetime.now()
     start_time = end_time = None
+
     if data.start_time is not None:
         start_time = convert_time(data.start_time)
         start_time = start_time["date"]

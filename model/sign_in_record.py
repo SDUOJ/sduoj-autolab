@@ -232,7 +232,6 @@ class signInRecordModel(dbSession):
 
         return res
 
-
     # 用户提交请假信息
     def submitLeaveInfo(self, data: dict):
         sg_u_id = data.get("sg_u_id")
