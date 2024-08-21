@@ -14,15 +14,13 @@ class signInRecordModel(dbSession):
         end_time = data["end_time"]
         u_gmt_create = data["u_gmt_create"]
         u_gmt_modified = data["u_gmt_modified"]
-        start_time = start_time.strftime("%Y-%m-%d %H:%M:%S")
-        end_time = end_time.strftime("%Y-%m-%d %H:%M:%S")
         u_gmt_create = u_gmt_create.strftime("%Y-%m-%d %H:%M:%S")
         u_gmt_modified = u_gmt_modified.strftime("%Y-%m-%d %H:%M:%S")
         data["start_time"] = start_time
         data["end_time"] = end_time
         data["u_gmt_create"] = u_gmt_create
         data["u_gmt_modified"] = u_gmt_modified
-        data = self.jsonDumps(data,["mode", "group_id", "m_group_id", "title", "seat_bind", "usl_id"])
+        data = self.jsonDumps(data,["mode", "group_id", "m_group_id", "seat_bind", "usl_id"])
         self.session.add(ojSign(**data))
         self.session.flush()
         self.session.commit()
@@ -78,8 +76,8 @@ class signInRecordModel(dbSession):
         signInfo = self.session.query(ojSign).filter(
             ojSign.sg_id == sg_id
         ).first()
-        start_time = signInfo.start_time.strftime("%Y-%m-%d %H:%M:%S")
-        end_time = signInfo.end_time.strftime("%Y-%m-%d %H:%M:%S")
+        start_time = signInfo.start_time.timestamp()
+        end_time = signInfo.end_time.timestamp()
         info["mode"] = signInfo.mode
         info["group_id"] = signInfo.group_id
         info["m_group_id"] = signInfo.group_id
@@ -104,8 +102,8 @@ class signInRecordModel(dbSession):
         query = self.session.query(ojSign).offset(offsets).limit(pageSize).all()
 
         for obj in query:
-            start_time = obj.start_time.strftime("%Y-%m-%d %H:%M:%S")
-            end_time = obj.end_time.strftime("%Y-%m-%d %H:%M:%S")
+            start_time = obj.start_time.timestamp()
+            end_time = obj.end_time.timestamp()
             data = {
                 "sg_id": obj.sg_id,
                 "mode": obj.mode,
@@ -146,7 +144,7 @@ class signInRecordModel(dbSession):
             signInfo = self.session.query(ojSignUser).filter(
                 ojSignUser.sg_id == obj.sg_id
             ).first()
-            sg_time = signInfo.sg_time.strftime("%Y-%m-%d %H:%M:%S")
+            sg_time = signInfo.sg_time.timestamp()
             data = {
                 "sg_u_id": signInfo.sg_u_id,
                 "user_name": obj.username,
@@ -169,11 +167,8 @@ class signInRecordModel(dbSession):
     # 用户签到  input: username  sg_id  seat_id  sg_user_message
     def signIn(self,data: dict):
         sg_time = data["sg_time"]
-        sg_time = sg_time.strftime("%Y-%m-%d %H:%M:%S")
-        data["sg_time"] = sg_time
-        sg_user_message = data["sg_user_message"]
-        sg_user_message = sg_user_message.strip()
-        data = self.jsonDumps(data, ["sg_id", "seat_id", "sg_absence_pass"])
+        data["sg_time"] = sg_time.strftime("%Y-%m-%d %H:%M:%S")
+        data = self.jsonDumps(data, [ "sg_id", "seat_id", "sg_absence_pass"])
         self.session.add(ojSignUser(**data))
         self.session.flush()
         self.session.commit()
@@ -185,7 +180,7 @@ class signInRecordModel(dbSession):
             ojSignUser.username == username, ojSignUser.sg_id == sg_id
         ).all()
         for i in data:
-            sg_time = i.sg_time.strftime("%Y-%m-%d %H:%M:%S")
+            sg_time = i.sg_time.timestamp()
             temp = {
                 "sg_u_id": i.sg_id,
                 "user_name": i.username,
@@ -219,9 +214,9 @@ class signInRecordModel(dbSession):
             get_sign = self.session.query(ojSign).filter(
                 ojSign.sg_id == i.sg_id
             ).first()
-            start_time = get_sign.start_time.strftime("%Y-%m-%d %H:%M:%S")
-            end_time = get_sign.end_time.strftime("%Y-%m-%d %H:%M:%S")
-            sg_time = i.sg_time.strftime("%Y-%m-%d %H:%M:%S")
+            start_time = get_sign.start_time.timestamp()
+            end_time = get_sign.end_time.timestamp()
+            sg_time = i.sg_time.timestamp()
             info = {
                 "sg_u_id": 3,
                 "sg_id": i.sg_id,
@@ -306,7 +301,7 @@ class signInRecordModel(dbSession):
             query = self.session.query(ojSign).filter(
                 ojSign.sg_id == obj.sg_id
             ).first()
-            sg_time = obj.sg_time.strftime("%Y-%m-%d %H:%M:%S")
+            sg_time = obj.sg_time.timestamp()
             data = {
                 "sg_u_id": obj.sg_u_id,
                 "sg_id": obj.sg_id,
@@ -316,3 +311,20 @@ class signInRecordModel(dbSession):
             res["data"].append(data)
 
         return res
+
+
+    def getSignListForWeChat(self):
+        info = {"title": []}
+        query = self.session.query(ojSign).all()
+        if query is None:
+            return info
+        for obj in query:
+            info["title"].append(obj.title)
+        return info
+
+    def convert_to_timestamp(self,dateitem):
+        # 将日期字符串转换为 datetime 对象
+        date_time_obj = datetime.datetime.strftime(dateitem, "%Y-%m-%d %H:%M:%S")
+        # 将 datetime 对象转换为时间戳
+        timestamp = date_time_obj.timestamp()
+        return {"date_str": dateitem, "timestamp": timestamp}
