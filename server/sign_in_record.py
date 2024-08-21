@@ -68,6 +68,7 @@ async def userInfo(sg_id: int, username: str):
     info = db.getUserInfo(sg_id, username)
     return makeResponse(info)
 
+
 # 用户签到 8
 @router.post("/userSign/checkIn")
 async def checkInUser(data: dict = Depends(checkIn)):
@@ -126,7 +127,7 @@ async def delete_leave_info(sg_u_id: int):
     return makeResponse(None)
 
 
-# 返回token 14
+# 返回token
 @router.post("/sign/returnToken")
 async def check_token(data: dict = Depends(checktoken)):
     db = signInRecordModel()
@@ -135,13 +136,22 @@ async def check_token(data: dict = Depends(checktoken)):
     return data["token"]
 
 
-# 传递二维码信息 15
+# 传递二维码信息 14
 @router.post("sign/checkAdmin")
 async def check_admin(data: dict = Depends(scanIn)):
     db = signInRecordModel()
     db.checktoken(data)
 
     return makeResponse(None)
+
+
+# 小程序端得到所有签到的title 15
+@router.get("/sign/weChatSignList")
+async def weChatSignList():
+    db = signInRecordModel()
+    info = db.getSignListForWeChat()
+    return makeResponse(info)
+
 
 
 
