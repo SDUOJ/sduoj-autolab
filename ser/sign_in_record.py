@@ -73,13 +73,13 @@ class pageType(BaseModel):
 
 def sign_create(data: signType):
     Now = datetime.now()
-    start_time = convert_time(data.start_time)
+    start_time = convert_time(data.start_time / 1000.0)
     start_time = start_time["strdate"]
-    end_time = convert_time(data.end_time)
+    end_time = convert_time(data.end_time / 1000.0)
     end_time = end_time["strdate"]
     data={
         "mode": data.mode,
-        "group_id": data.m_group_id,
+        "group_id": data.group_id,
         "m_group_id": data.m_group_id,
         "u_gmt_create": Now,
         "u_gmt_modified": Now,
@@ -97,11 +97,11 @@ def sign_edit(data: signEditType):
     start_time = end_time = None
 
     if data.start_time is not None:
-        start_time = convert_time(data.start_time)
+        start_time = convert_time(data.start_time / 1000.0)
         start_time = start_time["date"]
 
     if data.end_time is not None:
-        end_time = convert_time(data.end_time)
+        end_time = convert_time(data.end_time / 1000.0)
         end_time = end_time["date"]
     data = {
         "mode": data.mode,
@@ -148,7 +148,7 @@ def checktoken(data: usermess):
     data = {
         "username": data.username,
         "sg_id": data.sg_id,
-        "token": Token,
+        "token": Token
     }
     return data
 
