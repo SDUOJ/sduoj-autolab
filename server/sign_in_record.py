@@ -133,11 +133,14 @@ async def check_token(data: dict = Depends(checktoken)):
     db = signInRecordModel()
     db.committoken(data)
 
-    return data["token"]
+    info = {}
+    info["token"] = data["token"]
+
+    return makeResponse(info)
 
 
 # 传递二维码信息 14
-@router.post("sign/checkAdmin")
+@router.post("/sign/checkAdmin")
 async def check_admin(data: dict = Depends(scanIn)):
     db = signInRecordModel()
     db.checktoken(data)
