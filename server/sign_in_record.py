@@ -133,7 +133,10 @@ async def check_token(data: dict = Depends(checktoken)):
     db = signInRecordModel()
     db.committoken(data)
 
-    return data["token"]
+    info = {}
+    info["token"] = data["token"]
+
+    return makeResponse(info)
 
 
 # 传递二维码信息 14
