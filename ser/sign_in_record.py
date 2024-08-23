@@ -23,8 +23,8 @@ class signType(BaseModel):
     group_id: int
     m_group_id: int
     title: str
-    start_time: float = 0
-    end_time: float = 0
+    gmtStart: float = 0
+    gmtEnd: float = 0
     seat_bind: int
     usl_id: int = None
 
@@ -38,8 +38,8 @@ class signEditType(BaseModel):
     group_id: int = None
     m_group_id: int = None
     title: str = None
-    start_time: float = None
-    end_time: float = None
+    gmtStart: float = None
+    gmtEnd: float = None
     seat_bind: int = None
 
 
@@ -73,10 +73,10 @@ class pageType(BaseModel):
 
 def sign_create(data: signType):
     Now = datetime.now()
-    start_time = convert_time(data.start_time / 1000.0)
-    start_time = start_time["strdate"]
-    end_time = convert_time(data.end_time / 1000.0)
-    end_time = end_time["strdate"]
+    gmtStart = convert_time(data.gmtStart / 1000.0)
+    gmtStart = gmtStart["strdate"]
+    gmtEnd = convert_time(data.gmtEnd / 1000.0)
+    gmtEnd = gmtEnd["strdate"]
     data={
         "mode": data.mode,
         "group_id": data.group_id,
@@ -84,8 +84,8 @@ def sign_create(data: signType):
         "u_gmt_create": Now,
         "u_gmt_modified": Now,
         "title": data.title,
-        "start_time": start_time,
-        "end_time": end_time,
+        "gmtStart": gmtStart,
+        "gmtEnd": gmtEnd,
         "seat_bind": data.seat_bind,
         "usl_id": data.usl_id
     }
@@ -94,22 +94,22 @@ def sign_create(data: signType):
 
 def sign_edit(data: signEditType):
     Now = datetime.now()
-    start_time = end_time = None
+    gmtStart = gmtEnd = None
 
-    if data.start_time is not None:
-        start_time = convert_time(data.start_time / 1000.0)
-        start_time = start_time["date"]
+    if data.gmtStart is not None:
+        gmtStart = convert_time(data.gmtStart / 1000.0)
+        gmtStart = gmtStart["date"]
 
-    if data.end_time is not None:
-        end_time = convert_time(data.end_time / 1000.0)
-        end_time = end_time["date"]
+    if data.gmtEnd is not None:
+        gmtEnd = convert_time(data.gmtEnd / 1000.0)
+        gmtEnd = gmtEnd["date"]
     data = {
         "mode": data.mode,
         "group_id": data.m_group_id,
         "m_group_id": data.m_group_id,
         "title": data.title,
-        "start_time": start_time,
-        "end_time": end_time,
+        "gmtStart": gmtStart,
+        "gmtEnd": gmtEnd,
         "u_gmt_modified": Now,
         "seat_bind": data.seat_bind,
     }
@@ -165,7 +165,7 @@ def scanIn(data: SignInData):
 
 
 def convert_time(item: float):
-    data_time = datetime.fromtimestamp(item)
+    data_time = datetime.timestamp(item)
     format_time = data_time.strftime('%Y-%m-%d %H:%M:%S')
     return {"date": data_time, "strdate": format_time}
 

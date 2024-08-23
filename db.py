@@ -404,18 +404,20 @@ class ojSign(Base):
     title = Column(VARCHAR(63), nullable=False, comment="签到标签")
 
     # 开始时间
-    start_time = Column(DATETIME, nullable=False, comment="签到开始时间")
+    gmtStart = Column(DATETIME, nullable=False, comment="签到开始时间")
 
     # 结束时间
-    end_time = Column(DATETIME, nullable=False, comment="签到结束时间")
+    gmtEnd = Column(DATETIME, nullable=False, comment="签到结束时间")
 
     # 是否指定座位
     # 1 绑定  0 未绑定
     seat_bind = Column(INTEGER, nullable=False, comment="是否绑定座位：1 绑定  0 未绑定")
 
     # 名单id
-    usl_id = Column(INTEGER, nullable=False, comment="名单id")
+    usl_id = Column(INTEGER, nullable=True, comment="名单id")
 
+    #是否已被删除
+    sign_is_deleted = Column(INTEGER, default=0, comment="是否已被删除：0 否  1 是")
 
 # 用户签到表
 class ojSignUser(Base):
