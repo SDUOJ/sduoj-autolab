@@ -1,15 +1,18 @@
 import datetime
+import uuid
 
 from fastapi import HTTPException
 from sqlalchemy import and_, func
 
-from db import dbSession, ojSignUser, ojSign, ojSeat
+from db import dbSession, ojSignUser, ojSign, ojSeat,SignIn
 
+from sduojApi import getGroupMember
 # /model/sign_in_record.py-------------------------
 class signInRecordModel(dbSession):
 
     # 新建一个签到  input: mode  group_id  m_group_id  title  start_time  end_time  seat_bind
     def createSign(self, data: dict):
+        # 在sign表中建立签到
         start_time = data["start_time"]
         end_time = data["end_time"]
         u_gmt_create = data["u_gmt_create"]
@@ -20,8 +23,27 @@ class signInRecordModel(dbSession):
         data["end_time"] = end_time
         data["u_gmt_create"] = u_gmt_create
         data["u_gmt_modified"] = u_gmt_modified
-        data = self.jsonDumps(data,["mode", "group_id", "m_group_id", "seat_bind", "usl_id"])
+        data = self.jsonDumps(data, ["mode", "group_id", "m_group_id", "seat_bind", "usl_id"])
         self.session.add(ojSign(**data))
+        self.session.flush()
+        #self.session.commit()
+        # 根据 gourp_id 拉取学生名单初始化 uer_sign 表
+        get_sg_id = self.session.query(ojSign).filter(
+            ojSign.group_id == data["group_id"], ojSign.m_group_id == data["m_group_id"],
+            ojSign.usl_id == data["usl_id"], ojSign.seat_bind == data["seat_bind"],
+            ojSign.mode == data["mode"], ojSign.start_time == data["start_time"],
+            ojSign.end_time == data["end_time"], ojSign.u_gmt_create == u_gmt_create,
+            ojSign.u_gmt_modified == u_gmt_modified
+        ).first()
+        sg_id = get_sg_id.sg_id
+        name = self.session.query(SignIn).filter(
+            SignIn.groupId == data["group_id"]
+        ).all()
+        info = {}
+        for obj in name:
+            info["username"] = obj.username
+            info["sg_id"] = sg_id
+            self.session.add(ojSignUser(**info))
         self.session.flush()
         self.session.commit()
 
@@ -76,8 +98,8 @@ class signInRecordModel(dbSession):
         signInfo = self.session.query(ojSign).filter(
             ojSign.sg_id == sg_id
         ).first()
-        start_time = signInfo.start_time.timestamp()
-        end_time = signInfo.end_time.timestamp()
+        start_time = signInfo.start_time.timestamp() * 1000
+        end_time = signInfo.end_time.timestamp() * 1000
         info["mode"] = signInfo.mode
         info["group_id"] = signInfo.group_id
         info["m_group_id"] = signInfo.group_id
@@ -102,8 +124,8 @@ class signInRecordModel(dbSession):
         query = self.session.query(ojSign).offset(offsets).limit(pageSize).all()
 
         for obj in query:
-            start_time = obj.start_time.timestamp()
-            end_time = obj.end_time.timestamp()
+            start_time = obj.start_time.timestamp() * 1000.0
+            end_time = obj.end_time.timestamp() * 1000.0
             data = {
                 "sg_id": obj.sg_id,
                 "mode": obj.mode,
@@ -120,31 +142,22 @@ class signInRecordModel(dbSession):
 
 
     # 查询一个签到中的所有签到用户 006
-    def getUserSign(self, sg_id: int, pageNow: int , pageSize: int):
+    def getUserSign(self, sg_id: int):
         info = {"rows": []}
-        # 得到数据量
-        query = self.session.query(func.count(ojSignUser.sg_id)).filter(
-            ojSignUser.sg_id == sg_id
-        )
-        datanum = query.scalar()
-        info["totalNums"] = datanum
-        # 得到页数
-        totalpage = datanum // pageSize
-        info["totalPages"] = totalpage
 
         # 得到相关签到数据集
         query = self.session.query(ojSignUser).filter(
             ojSignUser.sg_id == sg_id
         ).all()
-        offets = (pageNow - 1) * pageSize
-        begin = 0
-        getinfonum = 1
-        pagesize = pageSize
+
         for obj in query:
             signInfo = self.session.query(ojSignUser).filter(
                 ojSignUser.sg_id == obj.sg_id
             ).first()
-            sg_time = signInfo.sg_time.timestamp()
+            if signInfo.sg_time is not None:
+                sg_time = signInfo.sg_time.timestamp() * 1000.0
+            else:
+                sg_time = 0
             data = {
                 "sg_u_id": signInfo.sg_u_id,
                 "user_name": obj.username,
@@ -153,13 +166,7 @@ class signInRecordModel(dbSession):
                 "sg_u_message": obj.sg_user_message,
                 "sg_absence_pass": obj.sg_absence_pass
             }
-
-            if begin >= offets:
-                if getinfonum <= pagesize:
-                    info["rows"].append(data)
-                    getinfonum += 1
-            else:
-                begin += 1
+            info["rows"].append(data)
 
         return info
 
@@ -168,8 +175,11 @@ class signInRecordModel(dbSession):
     def signIn(self,data: dict):
         sg_time = data["sg_time"]
         data["sg_time"] = sg_time.strftime("%Y-%m-%d %H:%M:%S")
+        edit_row = self.session.query(ojSignUser).filter(
+                    ojSignUser.sg_id == data["sg_id"], ojSignUser.username == data["username"]
+                    )
         data = self.jsonDumps(data, [ "sg_id", "seat_id", "sg_absence_pass"])
-        self.session.add(ojSignUser(**data))
+        edit_row.update(data)
         self.session.flush()
         self.session.commit()
 
@@ -180,7 +190,11 @@ class signInRecordModel(dbSession):
             ojSignUser.username == username, ojSignUser.sg_id == sg_id
         ).all()
         for i in data:
-            sg_time = i.sg_time.timestamp()
+            if i.sg_time is not None:
+                sg_time = i.sg_time.timestamp() * 1000.0
+            else:
+                sg_time = 0
+
             temp = {
                 "sg_u_id": i.sg_id,
                 "user_name": i.username,
@@ -210,13 +224,26 @@ class signInRecordModel(dbSession):
         q = self.session.query(ojSignUser).join(ojSign).filter(
             ojSignUser.username == username, ojSign.group_id == group_id
         ).offset((pageNow-1) * pageSize).limit(pageSize).all()
+
         for i in q:
             get_sign = self.session.query(ojSign).filter(
                 ojSign.sg_id == i.sg_id
             ).first()
-            start_time = get_sign.start_time.timestamp()
-            end_time = get_sign.end_time.timestamp()
-            sg_time = i.sg_time.timestamp()
+            if get_sign.start_time is not None:
+                start_time = get_sign.start_time.timestamp() * 1000.0
+            else:
+                start_time = 0
+
+            if get_sign.end_time is not None:
+                end_time = get_sign.end_time.timestamp() * 1000.0
+            else:
+                end_time = 0
+
+            if i.sg_time is not None:
+                sg_time = get_sign.sg_time.timestamp() * 1000.0
+            else:
+                sg_time = 0
+
             info = {
                 "sg_u_id": 3,
                 "sg_id": i.sg_id,
@@ -300,7 +327,10 @@ class signInRecordModel(dbSession):
             query = self.session.query(ojSign).filter(
                 ojSign.sg_id == obj.sg_id
             ).first()
-            sg_time = obj.sg_time.timestamp()
+            if obj.sg_time is not None:
+                sg_time = obj.sg_time.timestamp() * 1000.0
+            else:
+                sg_time = 0
             data = {
                 "sg_u_id": obj.sg_u_id,
                 "sg_id": obj.sg_id,
