@@ -237,7 +237,7 @@ class classBindingModel(dbSession):
     # 查询所有可用教室
     # input: pageNow, pageSize
     def get_available_classroom(self, pageNow=None, pageSize=None):
-        res = {"data": []}
+        res = {"rows": []}
         # 求数据总数量
         query = self.session.query(func.count(ojClass.c_id)).filter(
             ojClass.c_is_available == 1
@@ -276,7 +276,7 @@ class classBindingModel(dbSession):
             for i in qc:
                 if i.s_tag == 0:
                     data["s_number"].append(i.s_number)
-            res["data"].append(data)
+            res["rows"].append(data)
 
         return res
 
