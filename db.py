@@ -436,7 +436,7 @@ class ojSignUser(Base):
     sg_time = Column(DATETIME, nullable=True, comment="签到时间")
 
     # 签到唯一凭证
-    token = Column(VARCHAR(63), nullable=False, unique=True, comment="签到唯一凭证")
+    token = Column(VARCHAR(63), nullable=True, unique=True, comment="签到唯一凭证")
 
     # 请假信息
     sg_user_message = Column(LONGTEXT, nullable=True, comment="请假信息")
