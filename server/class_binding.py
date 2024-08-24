@@ -103,9 +103,9 @@ async def c_name_is_exist(data: dict):
 
 # 查询名单的助教
 @router.get("/seatList/{usl_id}/listTAInfo")
-async def check_TA_info(usl_id: int):
+async def check_TA_info(usl_id: int, pageNow: int = None, pageSize: int = None):
     db = classBindingModel()
-    res = db.check_TA_info(usl_id)
+    res = db.check_TA_info(usl_id, pageNow, pageSize)
     return res
 
 
@@ -115,3 +115,11 @@ async def check_list_info(usl_id: int):
     db = classBindingModel()
     res = db.check_list_info(usl_id)
     return res
+
+
+# 新建助教
+@router.post("/seatList/createTA")
+async def create_TA(data: dict):
+    db = classBindingModel()
+    db.create_TA(data)
+    return makeResponse(None)

@@ -69,6 +69,17 @@ class classBindingModel(dbSession):
             ).first()
         return ojClassUser_id
 
+    def get_TA_id_available(self, TA_id):
+        result = self.session.query(ojClassManageUser).filter(
+            ojClassManageUser.TA_id == TA_id
+        ).first()
+        while result is not None:
+            TA_id += 1
+            result = self.session.query(ojClassManageUser).filter(
+                ojClassManageUser.TA_id == TA_id
+            ).first()
+        return TA_id
+
     # 新建教室和座位
     # input: c_name, c_seat_num, c_description ,address ,[不可用的s_number]
     def classroom_create(self, data: dict):
@@ -148,13 +159,14 @@ class classBindingModel(dbSession):
         return result.s_number, result.c_id
 
     # 修改教室信息(可更新教室描述，座位状态)
-    # input: c_name，c_description, c_is_available,[不可用的s_number]
+    # input: c_name，c_description, c_is_available,[不可用的s_number],address
     def classroom_edit(self, data: dict):
         # 所有得到的信息取出来
         c_name = data.get("c_name")
         c_seat_num = data.get("c_seat_num")
         c_description = data.get("c_description")
         c_is_available = data.get("c_is_available")
+        address = data.get("address")
 
         # 取出不可用的座位
         no_use_seat = data.get("s_number", [])
@@ -175,6 +187,8 @@ class classBindingModel(dbSession):
                 update_cdata["c_description"] = c_description
             if c_is_available is not None:
                 update_cdata["c_is_available"] = c_is_available
+            if address is not None:
+                update_cdata["address"] = address
 
         if update_cdata:
             self.session.query(ojClass).filter(
@@ -247,14 +261,14 @@ class classBindingModel(dbSession):
         if totalNum == 0:
             return HTTPException(status_code=400, detail="没有可用教室")
 
-        res["totalNum"] = totalNum
+        res["totalNums"] = totalNum
         if pageNow is None:
             pageNow = 1
         if pageSize is None:
             pageSize = totalNum
         # 求总页数
         totalPage = totalNum // pageSize
-        res["totalPage"] = totalPage
+        res["totalPages"] = totalPage
 
         query = self.session.query(ojClass).filter(
             ojClass.c_is_available == 1
@@ -312,11 +326,11 @@ class classBindingModel(dbSession):
         # 求数据总数量
         query = self.session.query(func.count(ojUserSeatList.usl_id)).filter()
         totalNum = query.scalar()
-        res["totalNum"] = totalNum
+        res["totalNums"] = totalNum
 
         # 求总页数
         totalPage = totalNum // pageSize
-        res["totalPage"] = totalPage
+        res["totalPages"] = totalPage
 
         # 列出所有符合条件的数据
         qc = self.session.query(ojUserSeatList).filter().all()
@@ -372,6 +386,7 @@ class classBindingModel(dbSession):
             ).first()
             TA_name = q_TA_name.TA_name
             data = {
+                "usl_id": usl_id,
                 "username": username,
                 "c_name": c_name,
                 "s_number": s_number,
@@ -455,6 +470,7 @@ class classBindingModel(dbSession):
         return s_ip
 
     # 查询教室名是否已存在
+    # input: c_name
     def c_name_is_exist(self, data: dict):
         c_name = data.get("c_name")
         query = self.session.query(ojClass).filter()
@@ -465,27 +481,49 @@ class classBindingModel(dbSession):
         return False
 
     # 查询名单的助教
-    def check_TA_info(self, usl_id: int):
-        query = self.session.query(ojClassManageUser).filter(
+    # input: usl_id, pageNow, pageSize
+    def check_TA_info(self, usl_id: int, pageNow: int = None, pageSize: int = None):
+        # 求数据总数量
+        query = self.session.query(func.count(ojClassManageUser.TA_id)).filter(
             ojClassManageUser.usl_id == usl_id
         )
-        TA_id = query.first().TA_id
-        TA_name = query.first().TA_name
+        totalNum = query.scalar()
 
-        c_id = query.first().c_id
-        c_name = self.session.query(ojClass).filter(
-            ojClass.c_id == c_id
-        ).first().c_name
-        address = self.session.query(ojClass).filter(
-            ojClass.c_id == c_id
-        ).first().address
-        data = {
-            "TA_id": TA_id,
-            "TA_name": TA_name,
-            "c_name": c_name,
-            "address": address
+        if pageNow is None:
+            pageNow = 1
+        if pageSize is None:
+            pageSize = totalNum
+
+        totalPage = totalNum // pageSize
+
+        query = self.session.query(ojClassManageUser).filter(
+            ojClassManageUser.usl_id == usl_id
+        ).offset((pageNow - 1) * pageSize).limit(pageSize).all()
+
+        res = {
+            "rows": [],
+            "totalNums": totalNum,
+            "totalPages": totalPage
         }
-        return data
+        for obj in query:
+            TA_id = obj.TA_id
+            TA_name = obj.TA_name
+
+            c_id = obj.c_id
+            c_name = self.session.query(ojClass).filter(
+                ojClass.c_id == c_id
+            ).first().c_name
+            address = self.session.query(ojClass).filter(
+                ojClass.c_id == c_id
+            ).first().address
+            data = {
+                "TA_id": TA_id,
+                "TA_name": TA_name,
+                "c_name": c_name,
+                "address": address
+            }
+            res["rows"].append(data)
+        return res
 
     # 查询整个名单的用户，教室，座号
     def check_list_info(self, usl_id: int):
@@ -519,7 +557,26 @@ class classBindingModel(dbSession):
         }
         return data
 
+    # 新建助教
+    # input: TA_name, c_name, usl_id
+    def create_TA(self, data: dict):
+        TA_name = data.get("TA_name")
+        c_name = data.get("c_name")
+        usl_id = data.get("usl_id")
 
+        TA_id = TA_id_generator.get_next_id()
+        TA_id = self.get_TA_id_available(TA_id)
 
+        c_id = self.get_c_id_by_c_name(c_name)
 
+        data = {
+            "TA_id": TA_id,
+            "TA_name": TA_name,
+            "usl_id": usl_id,
+            "c_id": c_id
+        }
+        data = self.jsonDumps(data, ["TA_id", "TA_name", "usl_id", "c_id"])
 
+        self.session.add(ojClassManageUser(**data))
+        self.session.flush()
+        self.session.commit()
