@@ -580,3 +580,33 @@ class classBindingModel(dbSession):
         self.session.add(ojClassManageUser(**data))
         self.session.flush()
         self.session.commit()
+
+    # 删除助教
+    # input:TA_name
+    def delete_TA(self, data: dict):
+        TA_name = data.get("TA_name")
+        query = self.session.query(ojClassManageUser).filter(
+            ojClassManageUser.TA_name == TA_name
+        )
+        for obj in query:
+            self.session.delete(obj)
+            self.session.flush()
+            self.session.commit()
+
+    # 编辑助教
+    # input: TA_id, TA_name, c_name
+    def edit_TA(self, data: dict):
+        TA_id = data.get("TA_id")
+        TA_name = data.get("TA_name")
+        c_name = data.get("c_name")
+        c_id = self.get_c_id_by_c_name(c_name)
+
+        data = {
+            "TA_id": TA_id,
+            "TA_name": TA_name,
+            "c_id": c_id
+        }
+        self.session.query(ojClassManageUser).filter(
+            and_(ojClassManageUser.TA_id == TA_id, ojClassManageUser.TA_name == TA_name)
+        ).update(data)
+        self.session.commit()

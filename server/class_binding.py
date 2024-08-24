@@ -123,3 +123,19 @@ async def create_TA(data: dict):
     db = classBindingModel()
     db.create_TA(data)
     return makeResponse(None)
+
+
+# 删除助教
+@router.post("/seatList/deleteTA")
+async def delete_TA(data: dict):
+    db = classBindingModel()
+    db.delete_TA(data)
+    return makeResponse(None)
+
+
+# 编辑助教
+@router.post("/seatList/editTA")
+async def edit_TA(data: dict):
+    db = classBindingModel()
+    db.edit_TA(data)
+    return makeResponse(None)
