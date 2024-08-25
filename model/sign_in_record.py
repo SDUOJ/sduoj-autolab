@@ -188,7 +188,7 @@ class signInRecordModel(dbSession):
                 sg_time = 0
 
             data = {
-            "sg_u_id": signInfo.sg_u_id ,
+            "sg_u_id": obj.sg_u_id ,
             "username": obj.username ,
             "sg_time": sg_time ,
             "seat_id": obj.seat_id ,
