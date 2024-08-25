@@ -101,6 +101,7 @@ def editClassroom(data: dict):
     c_seat_num = data.get("c_seat_num")
     c_description = data.get("c_description")
     c_is_available = data.get("c_is_available")
+    address = data.get("address")
 
     # s_number是不可用的座位
     s_number = data.get("s_number")
@@ -110,7 +111,8 @@ def editClassroom(data: dict):
         "c_seat_num": c_seat_num,
         "c_description": c_description,
         "s_number": s_number,
-        "c_is_available": c_is_available
+        "c_is_available": c_is_available,
+        "address": address
     }
 
     return data
