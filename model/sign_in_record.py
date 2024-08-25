@@ -182,8 +182,8 @@ class signInRecordModel(dbSession):
             signInfo = self.session.query(ojSignUser).filter(
                 ojSignUser.sg_id == obj.sg_id
             ).first()
-            if signInfo.sg_time is not None:
-                sg_time = signInfo.sg_time.timestamp() * 1000.0
+            if obj.sg_time is not None:
+                sg_time = obj.sg_time.timestamp() * 1000.0
             else:
                 sg_time = 0
 
