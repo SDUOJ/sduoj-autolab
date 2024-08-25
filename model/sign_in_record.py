@@ -136,6 +136,7 @@ class signInRecordModel(dbSession):
         query = self.session.query(func.count(ojSign.sg_id)).filter(
             ojSign.sign_is_deleted != 1
         )
+
         datanum = query.scalar()
         if datanum == 0:
             return None
@@ -182,13 +183,13 @@ class signInRecordModel(dbSession):
             signInfo = self.session.query(ojSignUser).filter(
                 ojSignUser.sg_id == obj.sg_id
             ).first()
-            if signInfo.sg_time is not None:
-                sg_time = signInfo.sg_time.timestamp() * 1000.0
+            if obj.sg_time is not None:
+                sg_time = obj.sg_time.timestamp() * 1000.0
             else:
                 sg_time = 0
 
             data = {
-            "sg_u_id": signInfo.sg_u_id ,
+            "sg_u_id": obj.sg_u_id ,
             "username": obj.username ,
             "sg_time": sg_time ,
             "seat_id": obj.seat_id ,
@@ -207,6 +208,8 @@ class signInRecordModel(dbSession):
         edit_row = self.session.query(ojSignUser).filter(
                     ojSignUser.sg_id == data["sg_id"], ojSignUser.username == data["username"]
                     )
+        if edit_row.first() is None:
+            raise HTTPException(status_code=404, detail="查询无该用户")
         data = self.jsonDumps(data, [ "sg_id", "seat_id", "sg_absence_pass"])
         edit_row.update(data)
         self.session.flush()
@@ -214,6 +217,12 @@ class signInRecordModel(dbSession):
 
 
     def getUserInfo(self, sg_id: int, username: str):
+        is_sg_id_is_none = self.session.query(ojSign).filter(
+            ojSign.sg_id == sg_id
+        )
+        if is_sg_id_is_none.first() is None:
+            raise HTTPException(status_code=404, detail="查询无该签到")
+
         is_deleted = self.session.query(ojSign).filter(
             ojSign.sg_id == sg_id
         ).first().sign_is_deleted
@@ -296,6 +305,12 @@ class signInRecordModel(dbSession):
     # 用户提交请假信息
     def submitLeaveInfo(self, data: dict):
         sg_u_id = data.get("sg_u_id")
+        is_existed = self.session.query(ojSignUser).filter(
+            ojSignUser.sg_u_id == sg_u_id
+        ).first()
+        if is_existed is None:
+            raise HTTPException(status_code=404, detail = "未查询到该用户的签到信息")
+
         self.session.query(ojSignUser).filter(
             ojSignUser.sg_u_id == sg_u_id
         ).update(data)
@@ -304,6 +319,16 @@ class signInRecordModel(dbSession):
     # 后台审批请假信息
     def checkLeaveInfo(self, data: dict):
         sg_u_id = data.get("sg_u_id")
+
+        is_existed = self.session.query(ojSignUser).filter(
+            ojSignUser.sg_u_id == sg_u_id
+        ).first()
+        if is_existed is None:
+            raise HTTPException(status_code=404, detail="未查询到该用户的签到信息")
+
+        if is_existed.sg_user_message is None:
+            raise HTTPException(status_code=500, detail="该用户没有提交请假申请")
+
         self.session.query(ojSignUser).filter(
             ojSignUser.sg_u_id == sg_u_id
         ).update(data)
@@ -311,6 +336,12 @@ class signInRecordModel(dbSession):
 
     # 删除用户签到信息
     def deleteLeaveInfo(self, sg_u_id: int):
+        is_existed = self.session.query(ojSignUser).filter(
+            ojSignUser.sg_u_id == sg_u_id
+        )
+        if is_existed.first() is None:
+            raise HTTPException(status_code=404, detail="未找到该用户的签到信息")
+
         self.session.query(ojSignUser).filter(
             ojSignUser.sg_u_id == sg_u_id
         ).delete()
