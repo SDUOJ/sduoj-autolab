@@ -356,10 +356,23 @@ class signInRecordModel(dbSession):
 
     # 提交部分用户信息
     def committoken(self, data: dict):
-        data = self.jsonDumps(data, ["sg_u_id", "seat_id", "sg_time", "sg_user_message", "sg_absence_pass"])
-        self.session.add(ojSignUser(**data))
-        self.session.flush()
-        self.session.commit()
+        info = {}
+        user_query = self.session.query(ojSignUser).filter(
+            ojSignUser.username == data["username"],
+            ojSignUser.sg_id == data["sg_id"]
+        ).first()
+        if user_query:
+            info["token"] = user_query.token
+            return info
+        else:
+            Token = uuid.uuid4().hex
+            data["token"] = Token
+            info["token"] = Token
+            data = self.jsonDumps(data, ["sg_u_id", "seat_id", "sg_time", "sg_user_message", "sg_absence_pass"])
+            self.session.add(ojSignUser(**data))
+            self.session.flush()
+            self.session.commit()
+            return info
 
     # 验证token一致，完善签到信息
     def checktoken(self, data: dict):
