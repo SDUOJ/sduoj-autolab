@@ -184,3 +184,20 @@ async def deleteVideo(token: str):
         shutil.rmtree(path)
 
     return NormalResponse(code=0, message="视频记录已删除", data="视频记录已删除")
+
+# 根据bs_id删除所有视频记录
+@router.get("/deleteAll")
+async def deleteAll(bs_id: int):
+    data = bs_id
+    db = screenRecordModel()
+    result = db.get_video_list(data)
+    if not result:
+        return NormalResponse(code=404, message="无视频记录", data="无视频记录")
+
+    for r in result:
+        path = r.v_path
+        db.delete_by_token(r.token)
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+
+    return NormalResponse(code=0, message="所有视频记录已删除", data="所有视频记录已删除")
