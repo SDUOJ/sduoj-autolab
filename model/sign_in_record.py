@@ -392,6 +392,7 @@ class signInRecordModel(dbSession):
             query = self.session.query(ojSign).filter(
                 ojSign.sg_id == obj.sg_id, ojSign.sign_is_deleted != 1
             ).first()
+            mode = query.mode
             if obj.sg_time is not None:
                 sg_time = obj.sg_time.timestamp() * 1000.0
             else:
@@ -400,7 +401,8 @@ class signInRecordModel(dbSession):
                 "sg_u_id": obj.sg_u_id,
                 "sg_id": obj.sg_id,
                 "sg_time": sg_time,
-                "seat_id": obj.seat_id
+                "seat_id": obj.seat_id,
+                "mode": mode
             }
             res.append(data)
 
