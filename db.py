@@ -344,7 +344,7 @@ class ojClassManageUser(Base):
     __tablename__ = 'oj_class_manage_user'
 
     # 助教id,主键
-    TA_id = Column(INTEGER, primary_key=True, nullable=False)
+    TA_id = Column(INTEGER, primary_key=True, nullable=False, autoincrement=True)
 
     # 助教姓名
     TA_name = Column(VARCHAR(20), nullable=False)

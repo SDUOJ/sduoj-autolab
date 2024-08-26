@@ -7,87 +7,12 @@ from sqlalchemy import and_, func, delete
 from db import dbSession, ojClass, ojSeat, ojClassUser, ojUserSeatList, ojClassManageUser
 
 
-
-class IDGenerator:
-    # 生成唯一标识c_id和s_id
-    def __init__(self):
-        self.next_c_id = 1
-
-    def get_next_id(self):
-        current_id = self.next_c_id
-        self.next_c_id += 1
-        return current_id
-
-
-# id自增器
-s_id_generator = IDGenerator()
-TA_id_generator = IDGenerator()
-
-
 # /model/class_binding.py ------------------------------------------
 class classBindingModel(dbSession):
-    global s_id_generator
-    global TA_id_generator
-
-    def get_c_id_available(self, c_id):
-        result = self.session.query(ojClass).filter(
-            ojClass.c_id == c_id
-        ).first()
-        while result is not None:
-            c_id += 1
-            result = self.session.query(ojClass).filter(
-                ojClass.c_id == c_id
-            ).first()
-        return c_id
-
-    def get_s_id_available(self, s_id):
-        result = self.session.query(ojSeat).filter(
-            ojSeat.s_id == s_id
-        ).first()
-        while result is not None:
-            s_id += 1
-            result = self.session.query(ojSeat).filter(
-                ojSeat.s_id == s_id
-            ).first()
-        return s_id
-
-    def get_usl_id_available(self, usl_id):
-        result = self.session.query(ojUserSeatList).filter(
-            ojUserSeatList.usl_id == usl_id
-        ).first()
-        while result is not None:
-            usl_id += 1
-            result = self.session.query(ojUserSeatList).filter(
-                ojUserSeatList.usl_id == usl_id
-            ).first()
-        return usl_id
-
-    def get_ojClassUser_id_available(self, ojClassUser_id):
-        result = self.session.query(ojClassUser).filter(
-            ojClassUser.id == ojClassUser_id
-        ).first()
-        while result is not None:
-            ojClassUser_id += 1
-            result = self.session.query(ojClassUser).filter(
-                ojClassUser.id == ojClassUser_id
-            ).first()
-        return ojClassUser_id
-
-    def get_TA_id_available(self, TA_id):
-        result = self.session.query(ojClassManageUser).filter(
-            ojClassManageUser.TA_id == TA_id
-        ).first()
-        while result is not None:
-            TA_id += 1
-            result = self.session.query(ojClassManageUser).filter(
-                ojClassManageUser.TA_id == TA_id
-            ).first()
-        return TA_id
 
     # 新建教室和座位
     # input: c_name, c_seat_num, c_description ,address ,[不可用的s_number]
     def classroom_create(self, data: dict):
-        c_id = data.get("c_id")
         c_seat_num = data.get("c_seat_num")
         # 获取不可用座位
         no_use_seat = data.get("no_use_seat", [])
@@ -95,15 +20,16 @@ class classBindingModel(dbSession):
         data = self.jsonDumps(data, ["c_id", "c_name", "c_seat_num", "c_description", "c_is_available", "address"])
         data.pop("no_use_seat", None)
 
-        self.session.add(ojClass(**data))
+        new_class = ojClass(**data)
+        self.session.add(new_class)
         self.session.flush()
         self.session.commit()
 
+        # 获取插入记录的c_id
+        c_id = new_class.c_id
+
         for i in range(1, c_seat_num + 1):
-            s_id = s_id_generator.get_next_id()
-            s_id = self.get_s_id_available(s_id)
             seatData = {
-                "s_id": s_id,
                 "s_number": i,
                 "c_id": c_id,
                 "s_tag": 1 if i not in no_use_seat else 0,
@@ -306,7 +232,7 @@ class classBindingModel(dbSession):
         self.session.commit()
 
     # 编辑用户座位名单和教室座位绑定表
-    # input:usl_id, name, groupId
+    # input:已经存在的usl_id, name, groupId
     def edit_seat_list(self, data: dict):
         usl_id = data.get("usl_id")
         name = data.get("name")
@@ -324,12 +250,19 @@ class classBindingModel(dbSession):
 
     # 查询用户座位名单的列表user_seat_list
     # input: pageNow, pageSize
-    def get_user_seat_list_info(self, pageNow: int, pageSize: int):
+    def get_user_seat_list_info(self, pageNow: int = None, pageSize: int = None):
         res = {"data": []}
         # 求数据总数量
         query = self.session.query(func.count(ojUserSeatList.usl_id)).filter()
         totalNum = query.scalar()
         res["totalNums"] = totalNum
+
+        if pageNow is None:
+            pageNow = 1
+        if pageSize is None:
+            pageSize = totalNum
+        if totalNum == 0:
+            return HTTPException(status_code=400, detail="没有数据")
 
         # 求总页数
         totalPage = totalNum // pageSize
@@ -351,7 +284,7 @@ class classBindingModel(dbSession):
 
     # 根据名单名称查询整个名单，教室，座号，助教名称
     # input: name
-    def get_all_info(self, name: str):
+    def get_all_info(self, name: str, pageNow: int = None, pageSize: int = None):
         res = {"data": []}
 
         # 根据name查usl_id
@@ -364,6 +297,16 @@ class classBindingModel(dbSession):
         query = self.session.query(ojClassUser).filter(
             ojClassUser.usl_id == usl_id
         ).all()
+
+        totalNum = query.scalar()
+
+        if totalNum == 0:
+            return HTTPException(status_code=400, detail="没有数据")
+
+        if pageNow is None:
+            pageNow = 1
+        if pageSize is None:
+            pageSize = totalNum
 
         for obj in query:
             data = {}
@@ -570,13 +513,9 @@ class classBindingModel(dbSession):
         c_name = data.get("c_name")
         usl_id = data.get("usl_id")
 
-        TA_id = TA_id_generator.get_next_id()
-        TA_id = self.get_TA_id_available(TA_id)
-
         c_id = self.get_c_id_by_c_name(c_name)
 
         data = {
-            "TA_id": TA_id,
             "TA_name": TA_name,
             "usl_id": usl_id,
             "c_id": c_id
@@ -678,8 +617,3 @@ class classBindingModel(dbSession):
 
             self.session.merge(record)
             self.session.commit()
-
-
-
-
-
