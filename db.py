@@ -313,7 +313,7 @@ class ojUserSeatList(Base):
     __tablename__ = 'oj_user_seat_list'
 
     # 学生座位名单id
-    usl_id = Column(BIGINT, primary_key=True, nullable=False, unique=True, index=True)
+    usl_id = Column(BIGINT, primary_key=True, nullable=False, unique=True, index=True, autoincrement=True)
 
     # 名单名称
     name = Column(VARCHAR(50), nullable=False, unique=True, index=True)
