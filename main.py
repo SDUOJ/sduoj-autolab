@@ -26,7 +26,7 @@ app.include_router(class_binding.router)
 app.include_router(test.router)
 
 origins = [
-    "*"
+    "http://test.sduoj.com:3000"
 ]
 app.add_middleware(
     CORSMiddleware,
