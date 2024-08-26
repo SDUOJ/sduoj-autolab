@@ -131,10 +131,7 @@ async def delete_leave_info(sg_u_id: int):
 @router.post("/sign/returnToken")
 async def check_token(data: dict = Depends(checktoken)):
     db = signInRecordModel()
-    db.committoken(data)
-
-    info = {}
-    info["token"] = data["token"]
+    info = db.committoken(data)
 
     return makeResponse(info)
 
