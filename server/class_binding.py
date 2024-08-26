@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile, File
 
 from model.class_binding import classBindingModel
-from ser.class_binding import createClassroom, editClassroom, createSeatList, editSeatList
+from ser.class_binding import createClassroom, editSeatList, classroomEditType, userSeatListType
 from utils import makeResponse
 
 router = APIRouter(
@@ -22,7 +22,7 @@ async def create_classroom(data: dict = Depends(createClassroom)):
 
 # 修改教室信息
 @router.post("/editClassroom")
-async def edit_classroom(data: dict = Depends(editClassroom)):
+async def edit_classroom(data: dict = classroomEditType):
     db = classBindingModel()
     db.classroom_edit(data)
     return makeResponse(None)
@@ -47,7 +47,7 @@ async def get_available_classroom(pageNow: int = None, pageSize: int = None):
 
 # 新建用户座位名单
 @router.post("/seatList/create")
-async def create_seat_list(data: dict = Depends(createSeatList)):
+async def create_seat_list(data: dict = userSeatListType):
     db = classBindingModel()
     db.create_seat_list(data)
     return makeResponse(None)
@@ -66,7 +66,7 @@ async def edit_seat_list(data: dict = Depends(editSeatList)):
 async def get_user_seat_list_info(pageNow: int, pageSize: int):
     db = classBindingModel()
     res = db.get_user_seat_list_info(pageNow, pageSize)
-    return res
+    return makeResponse(res)
 
 
 # 查询整个名单，教室，座号，助教名称
@@ -106,7 +106,7 @@ async def c_name_is_exist(data: dict):
 async def check_TA_info(usl_id: int, pageNow: int = None, pageSize: int = None):
     db = classBindingModel()
     res = db.check_TA_info(usl_id, pageNow, pageSize)
-    return res
+    return makeResponse(res)
 
 
 # 查询整个名单的用户，教室，座号
@@ -139,3 +139,19 @@ async def edit_TA(data: dict):
     db = classBindingModel()
     db.edit_TA(data)
     return makeResponse(None)
+
+
+# 批量绑定IP
+@router.post("/multiBindingIP")
+async def multi_ip_binding(IPFiles: UploadFile = File(...)):
+    db = classBindingModel()
+    await db.multi_ip_binding(IPFiles)
+    return makeResponse(None)
+
+
+# # 批量绑定用户座次
+# @router.post("/seatList/multiSeatsBinding")
+# async def multi_seats_binding(bindingFiles: UploadFile = File(...)):
+#     db = classBindingModel()
+#     await db.multi_seats_binding(bindingFiles)
+#     return makeResponse(None)
