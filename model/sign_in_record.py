@@ -362,7 +362,16 @@ class signInRecordModel(dbSession):
             ojSignUser.sg_id == data["sg_id"]
         ).first()
         if user_query:
-            info["token"] = user_query.token
+            if user_query.token:
+                info["token"] = user_query.token
+            else:
+                Token = uuid.uuid4().hex
+                info["token"] = Token
+                self.session.query(ojSignUser).filter(
+                    ojSignUser.username == user_query.username,
+                    ojSignUser.sg_id == user_query.sg_id
+                ).update(info)
+                self.session.commit()
             return info
         else:
             Token = uuid.uuid4().hex
