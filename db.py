@@ -313,7 +313,7 @@ class ojUserSeatList(Base):
     __tablename__ = 'oj_user_seat_list'
 
     # 学生座位名单id
-    usl_id = Column(BIGINT, primary_key=True, nullable=False, unique=True, index=True)
+    usl_id = Column(BIGINT, primary_key=True, nullable=False, unique=True, index=True, autoincrement=True)
 
     # 名单名称
     name = Column(VARCHAR(50), nullable=False, unique=True, index=True)
@@ -344,7 +344,7 @@ class ojClassManageUser(Base):
     __tablename__ = 'oj_class_manage_user'
 
     # 助教id,主键
-    TA_id = Column(INTEGER, primary_key=True, nullable=False)
+    TA_id = Column(INTEGER, primary_key=True, nullable=False, autoincrement=True)
 
     # 助教姓名
     TA_name = Column(VARCHAR(20), nullable=False)
@@ -404,18 +404,20 @@ class ojSign(Base):
     title = Column(VARCHAR(63), nullable=False, comment="签到标签")
 
     # 开始时间
-    start_time = Column(DATETIME, nullable=False, comment="签到开始时间")
+    gmtStart = Column(DATETIME, nullable=False, comment="签到开始时间")
 
     # 结束时间
-    end_time = Column(DATETIME, nullable=False, comment="签到结束时间")
+    gmtEnd = Column(DATETIME, nullable=False, comment="签到结束时间")
 
     # 是否指定座位
     # 1 绑定  0 未绑定
     seat_bind = Column(INTEGER, nullable=False, comment="是否绑定座位：1 绑定  0 未绑定")
 
     # 名单id
-    usl_id = Column(INTEGER, nullable=False, comment="名单id")
+    usl_id = Column(INTEGER, nullable=True, comment="名单id")
 
+    #是否已被删除
+    sign_is_deleted = Column(INTEGER, default=0, comment="是否已被删除：0 否  1 是")
 
 # 用户签到表
 class ojSignUser(Base):
@@ -436,7 +438,7 @@ class ojSignUser(Base):
     sg_time = Column(DATETIME, nullable=True, comment="签到时间")
 
     # 签到唯一凭证
-    token = Column(VARCHAR(63), nullable=False, unique=True, comment="签到唯一凭证")
+    token = Column(VARCHAR(63), nullable=True, unique=True, comment="签到唯一凭证")
 
     # 请假信息
     sg_user_message = Column(LONGTEXT, nullable=True, comment="请假信息")

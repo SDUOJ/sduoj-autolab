@@ -23,8 +23,8 @@ class signType(BaseModel):
     group_id: int
     m_group_id: int
     title: str
-    start_time: datetime
-    end_time: datetime
+    gmtStart: float = 0
+    gmtEnd: float = 0
     seat_bind: int
     usl_id: int = None
 
@@ -34,13 +34,12 @@ class userSignIn(BaseModel):
 
 
 class signEditType(BaseModel):
-    sg_id: int
     mode: int = None
     group_id: int = None
     m_group_id: int = None
     title: str = None
-    start_time: datetime = None
-    end_time: datetime = None
+    gmtStart: float = None
+    gmtEnd: float = None
     seat_bind: int = None
 
 
@@ -74,31 +73,43 @@ class pageType(BaseModel):
 
 def sign_create(data: signType):
     Now = datetime.now()
+    gmtStart = convert_time(data.gmtStart / 1000.0)
+    gmtStart = gmtStart["strdate"]
+    gmtEnd = convert_time(data.gmtEnd / 1000.0)
+    gmtEnd = gmtEnd["strdate"]
     data={
         "mode": data.mode,
-        "group_id": data.m_group_id,
+        "group_id": data.group_id,
         "m_group_id": data.m_group_id,
         "u_gmt_create": Now,
         "u_gmt_modified": Now,
         "title": data.title,
-        "start_time": data.start_time,
-        "end_time": data.end_time,
+        "gmtStart": gmtStart,
+        "gmtEnd": gmtEnd,
         "seat_bind": data.seat_bind,
-        "usl_id": 1
+        "usl_id": data.usl_id
     }
     return data
 
 
 def sign_edit(data: signEditType):
     Now = datetime.now()
+    gmtStart = gmtEnd = None
+
+    if data.gmtStart is not None:
+        gmtStart = convert_time(data.gmtStart / 1000.0)
+        gmtStart = gmtStart["date"]
+
+    if data.gmtEnd is not None:
+        gmtEnd = convert_time(data.gmtEnd / 1000.0)
+        gmtEnd = gmtEnd["date"]
     data = {
-        "sg_id":data.sg_id,
         "mode": data.mode,
         "group_id": data.m_group_id,
         "m_group_id": data.m_group_id,
         "title": data.title,
-        "start_time": data.start_time,
-        "end_time": data.end_time,
+        "gmtStart": gmtStart,
+        "gmtEnd": gmtEnd,
         "u_gmt_modified": Now,
         "seat_bind": data.seat_bind,
     }
@@ -110,8 +121,8 @@ def checkIn(data: signInType):
     Token = uuid.uuid4().hex
     sg_absence_pass = None
     #处理请假信息  # 1 通过  none 审批中  2 不通过
-    if data.sg_user_message is None:
-        return None
+    #if data.sg_user_message is None:
+    #    return None
     data = {
         "username": data.username,
         "sg_id": data.sg_id,
@@ -137,7 +148,7 @@ def checktoken(data: usermess):
     data = {
         "username": data.username,
         "sg_id": data.sg_id,
-        "token": Token,
+        "token": Token
     }
     return data
 
@@ -151,3 +162,10 @@ def scanIn(data: SignInData):
         "s_number": data.s_number
     }
     return data
+
+
+def convert_time(item: float):
+    data_time = datetime.timestamp(item)
+    format_time = data_time.strftime('%Y-%m-%d %H:%M:%S')
+    return {"date": data_time, "strdate": format_time}
+
