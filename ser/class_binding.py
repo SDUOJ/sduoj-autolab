@@ -19,12 +19,20 @@ ojClassUser_id_generator = IDGenerator()
 class classroomType(BaseModel):
     # 记录所有的教室信息
 
-    ### c_id: int  # 教室id
+    # c_id: int  # 教室id
     c_name: str  # 教室名
     c_seat_num: int  # 教室的座位数量
     c_description: Union[str, None]  # 教室描述
-    ### c_is_available: int  # 教室是否可用
+    c_is_available: int  # 教室是否可用
     address: str  # 教室在哪个楼上
+
+
+class classroomEditType(BaseModel):
+    c_name: str  # 教室名
+    c_description: Union[str, None]  # 教室描述
+    c_is_available: int  # 教室是否可用
+    address: str  # 教室在哪个楼上
+    s_number: list  # 不可用的座位号(列表)
 
 
 class seatType(classroomType):
@@ -96,39 +104,6 @@ def createClassroom(data: dict):
     return data
 
 
-def editClassroom(data: dict):
-    c_name = data.get("c_name")
-    c_seat_num = data.get("c_seat_num")
-    c_description = data.get("c_description")
-    c_is_available = data.get("c_is_available")
-    address = data.get("address")
-
-    # s_number是不可用的座位
-    s_number = data.get("s_number")
-
-    data = {
-        "c_name": c_name,
-        "c_seat_num": c_seat_num,
-        "c_description": c_description,
-        "s_number": s_number,
-        "c_is_available": c_is_available,
-        "address": address
-    }
-
-    return data
-
-
-def createSeatList(data: dict):
-    global usl_id_generator
-
-    temp = classBindingModel()
-    usl_id = usl_id_generator.get_next_id()
-    usl_id = temp.get_usl_id_available(usl_id)
-    data["usl_id"] = usl_id
-
-    return data
-
-
 def editSeatList(data: dict):
     global ojClassUser_id_generator
 
@@ -138,6 +113,3 @@ def editSeatList(data: dict):
     data["id"] = ojClassUser_id
 
     return data
-
-
-

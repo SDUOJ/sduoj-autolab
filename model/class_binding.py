@@ -1,7 +1,11 @@
-from fastapi import HTTPException
+from io import BytesIO
+
+import pandas as pd
+from fastapi import HTTPException, File, UploadFile
 from sqlalchemy import and_, func
 
 from db import dbSession, ojClass, ojSeat, ojClassUser, ojUserSeatList, ojClassManageUser
+
 
 
 class IDGenerator:
@@ -163,7 +167,6 @@ class classBindingModel(dbSession):
     def classroom_edit(self, data: dict):
         # 所有得到的信息取出来
         c_name = data.get("c_name")
-        c_seat_num = data.get("c_seat_num")
         c_description = data.get("c_description")
         c_is_available = data.get("c_is_available")
         address = data.get("address")
@@ -489,6 +492,9 @@ class classBindingModel(dbSession):
         )
         totalNum = query.scalar()
 
+        if totalNum == 0:
+            return HTTPException(status_code=400, detail="没有助教")
+
         if pageNow is None:
             pageNow = 1
         if pageSize is None:
@@ -610,3 +616,35 @@ class classBindingModel(dbSession):
             and_(ojClassManageUser.TA_id == TA_id, ojClassManageUser.TA_name == TA_name)
         ).update(data)
         self.session.commit()
+
+    # 批量绑定IP
+    # input:Excel文件，第一列为c_id，第二列为s_number，第三列为IP
+    # （每次绑定都先删除之前的IP，然后绑定，从而实现删除和编辑的功能）
+    async def multi_ip_binding(self, file: UploadFile):
+        # 删除之前的ip
+        self.session.query(ojSeat).update({"s_ip": None})
+
+        # 使用 BytesIO 读取上传的文件
+        file_content = await file.read()  # 读取文件内容到内存
+        excel_stream = BytesIO(file_content)  # 创建 BytesIO 对象
+
+        # 读取上传的 Excel 文件
+        df = pd.read_excel(excel_stream)
+
+        # 绑定新的 IP
+        for index, row in df.iterrows():
+            c_id = row[0]
+            s_number = row[1]
+            ip = row[2]
+            self.session.query(ojSeat).filter(
+                and_(ojSeat.c_id == c_id, ojSeat.s_number == s_number)
+            ).update({"s_ip": ip})
+
+        self.session.commit()
+
+    # # 批量绑定用户座次
+    # # input: excel文件,第一列为username，第二列为c_id，第三列为s_number
+    # # （每次绑定都先删除之前的绑定信息，然后绑定，从而实现删除和编辑的功能）
+    # async def multi_seats_binding(self, file: UploadFile):
+
+
