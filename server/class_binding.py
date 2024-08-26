@@ -143,15 +143,15 @@ async def edit_TA(data: dict):
 
 # 批量绑定IP
 @router.post("/multiBindingIP")
-async def multi_ip_binding(IPFiles: UploadFile = File(...)):
+async def multi_ip_binding(file: UploadFile = File(...)):
     db = classBindingModel()
-    await db.multi_ip_binding(IPFiles)
+    await db.multi_ip_binding(file)
     return makeResponse(None)
 
 
-# # 批量绑定用户座次
-# @router.post("/seatList/multiSeatsBinding")
-# async def multi_seats_binding(bindingFiles: UploadFile = File(...)):
-#     db = classBindingModel()
-#     await db.multi_seats_binding(bindingFiles)
-#     return makeResponse(None)
+# 批量绑定用户座次
+@router.post("/seatList/multiSeatsBinding")
+async def multi_seats_binding(file: UploadFile = File(...)):
+    db = classBindingModel()
+    await db.multi_seats_binding(file)
+    return makeResponse(None)

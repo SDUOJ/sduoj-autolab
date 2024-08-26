@@ -2,7 +2,7 @@ from io import BytesIO
 
 import pandas as pd
 from fastapi import HTTPException, File, UploadFile
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, delete
 
 from db import dbSession, ojClass, ojSeat, ojClassUser, ojUserSeatList, ojClassManageUser
 
@@ -642,9 +642,44 @@ class classBindingModel(dbSession):
 
         self.session.commit()
 
-    # # 批量绑定用户座次
-    # # input: excel文件,第一列为username，第二列为c_id，第三列为s_number
-    # # （每次绑定都先删除之前的绑定信息，然后绑定，从而实现删除和编辑的功能）
-    # async def multi_seats_binding(self, file: UploadFile):
+    # 批量绑定用户座次
+    # input: excel文件,第一列为username，第二列为c_id，第三列为s_number
+    # （每次绑定都先删除之前的绑定信息，然后绑定，从而实现删除和编辑的功能）
+    async def multi_seats_binding(self, file: UploadFile):
+        # 删除之前的绑定信息
+        stmt = delete(ojClassUser)
+        self.session.execute(stmt)
+        self.session.commit()
+
+        # 使用 BytesIO 读取上传的文件
+        file_content = await file.read()  # 读取文件内容到内存
+        excel_stream = BytesIO(file_content)  # 创建 BytesIO 对象
+
+        # 读取上传的 Excel 文件
+        df = pd.read_excel(excel_stream)
+
+        # 绑定新的信息
+        for index, row in df.iterrows():
+            usl_id = row[0]
+            username = row[1]
+            c_id = row[2]
+            s_number = row[3]
+
+            s_id = self.session.query(ojSeat).filter(
+                and_(ojSeat.c_id == c_id, ojSeat.s_number == s_number)
+            ).first().s_id
+
+            # 使用merge()方法插入或更新记录
+            record = ojClassUser(
+                usl_id=usl_id,
+                username=username,
+                s_id=s_id
+            )
+
+            self.session.merge(record)
+            self.session.commit()
+
+
+
 
 
