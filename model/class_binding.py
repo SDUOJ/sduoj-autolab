@@ -283,7 +283,7 @@ class classBindingModel(dbSession):
         return res
 
     # 根据名单名称查询整个名单，教室，座号，助教名称
-    # input: name
+    # input: name, pageNow, pageSize
     def get_all_info(self, name: str, pageNow: int = None, pageSize: int = None):
         res = {"data": []}
 
@@ -294,28 +294,33 @@ class classBindingModel(dbSession):
         usl_id = q_usl_id.first().usl_id
 
         # 列出所有符合条件的数据
-        query = self.session.query(ojClassUser).filter(
+        query = self.session.query(func.count(ojClassUser.usl_id)).filter(
             ojClassUser.usl_id == usl_id
-        ).all()
-
+        )
         totalNum = query.scalar()
-
-        if totalNum == 0:
-            return HTTPException(status_code=400, detail="没有数据")
+        res["totalNums"] = totalNum
 
         if pageNow is None:
             pageNow = 1
         if pageSize is None:
             pageSize = totalNum
+        if totalNum == 0:
+            return HTTPException(status_code=400, detail="没有数据")
+
+        # 求总页数
+        totalPage = totalNum // pageSize
+        res["totalPages"] = totalPage
+
+        query = self.session.query(ojClassUser).filter(
+            ojClassUser.usl_id == usl_id
+        ).offset((pageNow - 1) * pageSize).limit(pageSize).all()
 
         for obj in query:
-            data = {}
             username = obj.username
             s_id = obj.s_id
-
             # 由s_id查询c_id和s_number
             q_c_id_s_number = self.session.query(ojSeat).filter(
-                ojSeat.s_id == obj.s_id
+                ojSeat.s_id == s_id
             ).first()
             c_id = q_c_id_s_number.c_id
             s_number = q_c_id_s_number.s_number
@@ -325,7 +330,6 @@ class classBindingModel(dbSession):
                 ojClass.c_id == c_id
             ).first()
             c_name = q_c_name.c_name
-
             # 查询TA_name
             q_TA_name = self.session.query(ojClassManageUser).filter(
                 and_(ojClassManageUser.usl_id == usl_id, ojClassManageUser.c_id == c_id)
@@ -344,7 +348,7 @@ class classBindingModel(dbSession):
 
     # 查询单人信息
     # input: groupId, username
-    def get_single_user_info(self, groupId: int, username: int):
+    def get_single_user_info(self, groupId: int, username: int, pageNow: int = None, pageSize: int = None):
         res = {"data": []}
 
         # 根据groupId查usl_id
@@ -354,9 +358,27 @@ class classBindingModel(dbSession):
         usl_id = q_usl_id.first().usl_id
 
         # 列出所有符合条件的数据
+        query = self.session.query(func.count(ojClassUser.usl_id)).filter(
+            and_(ojClassUser.usl_id == usl_id, ojClassUser.username == username)
+        )
+
+        totalNum = query.scalar()
+        res["totalNums"] = totalNum
+
+        if pageNow is None:
+            pageNow = 1
+        if pageSize is None:
+            pageSize = totalNum
+        if totalNum == 0:
+            return HTTPException(status_code=400, detail="没有数据")
+
+        # 求总页数
+        totalPage = totalNum // pageSize
+        res["totalPages"] = totalPage
+
         query = self.session.query(ojClassUser).filter(
             and_(ojClassUser.usl_id == usl_id, ojClassUser.username == username)
-        ).all()
+        ).offset((pageNow - 1) * pageSize).limit(pageSize).all()
 
         for obj in query:
             s_id = obj.s_id
@@ -475,36 +497,54 @@ class classBindingModel(dbSession):
         return res
 
     # 查询整个名单的用户，教室，座号
-    def check_list_info(self, usl_id: int):
+    def check_list_info(self, usl_id: int, pageNow: int = None, pageSize: int = None):
+        query = self.session.query(func.count(ojClassUser.usl_id)).filter(
+            ojClassUser.usl_id == usl_id
+        )
+        res = {"data": []}
+        totalNum = query.scalar()
+
+        if totalNum == 0:
+            return HTTPException(status_code=400, detail="没有数据")
+
+        if pageNow is None:
+            pageNow = 1
+        if pageSize is None:
+            pageSize = totalNum
+
+        totalPage = totalNum // pageSize
+        res["totalNums"] = totalNum
+        res["totalPages"] = totalPage
+
         query = self.session.query(ojClassUser).filter(
             ojClassUser.usl_id == usl_id
-        )
-        tempSid = query.first().s_id
+        ).offset((pageNow - 1) * pageSize).limit(pageSize).all()
 
-        c_id = self.session.query(ojSeat).filter(
-            ojSeat.s_id == tempSid
-        ).first().c_id
-        c_name = self.session.query(ojClass).filter(
-            ojClass.c_id == c_id
-        ).first().c_name
+        for obj in query:
+            tempSid = obj.s_id
 
-        q_id = self.session.query(ojClassUser).filter(
-            ojClassUser.usl_id == usl_id
-        )
-        Id = q_id.first().id
-        username = q_id.first().username
-        s_id = q_id.first().s_id
+            c_id = self.session.query(ojSeat).filter(
+                ojSeat.s_id == tempSid
+            ).first().c_id
+            c_name = self.session.query(ojClass).filter(
+                ojClass.c_id == c_id
+            ).first().c_name
 
-        s_number = self.session.query(ojSeat).filter(
-            ojSeat.s_id == s_id
-        ).first().s_number
-        data = {
-            "id": Id,
-            "username": username,
-            "c_name": c_name,
-            "s_number": s_number
-        }
-        return data
+            Id = obj.id
+            username = obj.username
+            s_id = obj.s_id
+
+            s_number = self.session.query(ojSeat).filter(
+                ojSeat.s_id == s_id
+            ).first().s_number
+
+            res["data"].append({
+                "id": Id,
+                "username": username,
+                "c_name": c_name,
+                "s_number": s_number
+            })
+        return res
 
     # 新建助教
     # input: TA_name, c_name, usl_id
