@@ -74,14 +74,14 @@ async def get_user_seat_list_info(pageNow: int = None, pageSize: int = None):
 async def get_all_info(name: str, pageNow: int = None, pageSize: int = None):
     db = classBindingModel()
     res = db.get_all_info(name, pageNow, pageSize)
-    return res
+    return makeResponse(res)
 
 
 # 查询单人信息
 @router.get("/seatList/{groupId}/{username}/seatInfo")
-async def get_single_user_info(groupId: int, username: int):
+async def get_single_user_info(groupId: int, username: int, pageNow: int = None, pageSize: int = None):
     db = classBindingModel()
-    res = db.get_single_user_info(groupId, username)
+    res = db.get_single_user_info(groupId, username, pageNow, pageSize)
     return res
 
 
@@ -111,9 +111,9 @@ async def check_TA_info(usl_id: int, pageNow: int = None, pageSize: int = None):
 
 # 查询整个名单的用户，教室，座号
 @router.get("/seatList/{usl_id}/checkAllListInfo")
-async def check_list_info(usl_id: int):
+async def check_list_info(usl_id: int, pageNow: int = None, pageSize: int = None):
     db = classBindingModel()
-    res = db.check_list_info(usl_id)
+    res = db.check_list_info(usl_id, pageNow, pageSize)
     return res
 
 
