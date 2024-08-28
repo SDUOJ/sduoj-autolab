@@ -13,13 +13,20 @@ class classBindingModel(dbSession):
     # 新建教室和座位
     # input: c_name, c_seat_num, c_description ,address ,[不可用的s_number]
     def classroom_create(self, data: dict):
+        c_name = data.get("c_name")
         c_seat_num = data.get("c_seat_num")
+        c_description = data.get("c_description")
+        c_is_available = data.get("c_is_available")
+        address = data.get("address")
         # 获取不可用座位
         no_use_seat = data.get("no_use_seat", [])
-
-        data = self.jsonDumps(data, ["c_id", "c_name", "c_seat_num", "c_description", "c_is_available", "address"])
-        data.pop("no_use_seat", None)
-
+        data = {
+            "c_name": c_name,
+            "c_seat_num": c_seat_num,
+            "c_description": c_description,
+            "c_is_available": c_is_available,
+            "address": address
+        }
         new_class = ojClass(**data)
         self.session.add(new_class)
         self.session.flush()
@@ -35,7 +42,6 @@ class classBindingModel(dbSession):
                 "s_tag": 1 if i not in no_use_seat else 0,
                 "s_ip": None
             }
-            seatData = self.jsonDumps(seatData, ["s_id", "s_number", "c_id", "s_tag", "s_ip"])
             self.session.add(ojSeat(**seatData))
             self.session.flush()
             self.session.commit()
@@ -226,7 +232,14 @@ class classBindingModel(dbSession):
     # 新建用户座位名单
     # input:name, groupId
     def create_seat_list(self, data: dict):
-        data = self.jsonDumps(data, ["usl_id", "name", "groupId"])
+        usl_id = data.get("usl_id")
+        name = data.get("name")
+        groupId = data.get("groupId")
+        data = {
+            "usl_id": usl_id,
+            "name": name,
+            "groupId": groupId
+        }
         self.session.add(ojUserSeatList(**data))
         self.session.flush()
         self.session.commit()
@@ -560,7 +573,6 @@ class classBindingModel(dbSession):
             "usl_id": usl_id,
             "c_id": c_id
         }
-        data = self.jsonDumps(data, ["TA_id", "TA_name", "usl_id", "c_id"])
 
         self.session.add(ojClassManageUser(**data))
         self.session.flush()
