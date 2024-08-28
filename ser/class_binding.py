@@ -4,16 +4,11 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import session
 
-from model.class_binding import classBindingModel, IDGenerator
+from model.class_binding import classBindingModel
 from db import ojClass, dbSession
 
+
 # /ser/class_binding.py(序列化器部分，感觉像是定义信息;在这里面的函数把得到的传参汇总了再return)----------------------
-
-
-# id自增器
-c_id_generator = IDGenerator()
-usl_id_generator = IDGenerator()
-ojClassUser_id_generator = IDGenerator()
 
 
 class classroomType(BaseModel):
@@ -66,14 +61,7 @@ class classManageUserType(userSeatListType, classroomType):
     c_id: int  # 教室id
 
 
-class pageType(BaseModel):
-    pageNow: int
-    pageSize: int
-
-
 def createClassroom(data: dict):
-    global c_id_generator
-
     c_name = data.get("c_name")
     c_seat_num = data.get("c_seat_num")
     c_description = data.get("c_description")
@@ -88,11 +76,8 @@ def createClassroom(data: dict):
         raise HTTPException(status_code=400, detail="应写入教室描述")
 
     temp = classBindingModel()
-    c_id = c_id_generator.get_next_id()
-    c_id = temp.get_c_id_available(c_id)
     # c_available 默认为 True
     data = {
-        "c_id": c_id,
         "c_name": c_name,
         "c_seat_num": c_seat_num,
         "c_description": c_description,
@@ -100,16 +85,5 @@ def createClassroom(data: dict):
         "address": address,
         "no_use_seat": no_use_seat
     }
-
-    return data
-
-
-def editSeatList(data: dict):
-    global ojClassUser_id_generator
-
-    temp = classBindingModel()
-    ojClassUser_id = ojClassUser_id_generator.get_next_id()
-    ojClassUser_id = temp.get_usl_id_available(ojClassUser_id)
-    data["id"] = ojClassUser_id
 
     return data

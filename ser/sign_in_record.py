@@ -144,11 +144,10 @@ def get_page(data: pageType):
 
 
 def checktoken(data: usermess):
-    Token = uuid.uuid4().hex
     data = {
         "username": data.username,
         "sg_id": data.sg_id,
-        "token": Token
+        "token": ""
     }
     return data
 
