@@ -13,13 +13,20 @@ class classBindingModel(dbSession):
     # 新建教室和座位
     # input: c_name, c_seat_num, c_description ,address ,[不可用的s_number]
     def classroom_create(self, data: dict):
+        c_name = data.get("c_name")
         c_seat_num = data.get("c_seat_num")
+        c_description = data.get("c_description")
+        c_is_available = data.get("c_is_available")
+        address = data.get("address")
         # 获取不可用座位
         no_use_seat = data.get("no_use_seat", [])
-
-        data = self.jsonDumps(data, ["c_id", "c_name", "c_seat_num", "c_description", "c_is_available", "address"])
-        data.pop("no_use_seat", None)
-
+        data = {
+            "c_name": c_name,
+            "c_seat_num": c_seat_num,
+            "c_description": c_description,
+            "c_is_available": c_is_available,
+            "address": address
+        }
         new_class = ojClass(**data)
         self.session.add(new_class)
         self.session.flush()
@@ -35,7 +42,6 @@ class classBindingModel(dbSession):
                 "s_tag": 1 if i not in no_use_seat else 0,
                 "s_ip": None
             }
-            seatData = self.jsonDumps(seatData, ["s_id", "s_number", "c_id", "s_tag", "s_ip"])
             self.session.add(ojSeat(**seatData))
             self.session.flush()
             self.session.commit()
@@ -190,14 +196,14 @@ class classBindingModel(dbSession):
         if totalNum == 0:
             return HTTPException(status_code=400, detail="没有可用教室")
 
-        res["totalNums"] = totalNum
+        res["totalNum"] = totalNum
         if pageNow is None:
             pageNow = 1
         if pageSize is None:
             pageSize = totalNum
         # 求总页数
         totalPage = totalNum // pageSize
-        res["totalPages"] = totalPage
+        res["totalPage"] = totalPage
 
         query = self.session.query(ojClass).filter(
             ojClass.c_is_available == 1
@@ -226,7 +232,14 @@ class classBindingModel(dbSession):
     # 新建用户座位名单
     # input:name, groupId
     def create_seat_list(self, data: dict):
-        data = self.jsonDumps(data, ["usl_id", "name", "groupId"])
+        usl_id = data.get("usl_id")
+        name = data.get("name")
+        groupId = data.get("groupId")
+        data = {
+            "usl_id": usl_id,
+            "name": name,
+            "groupId": groupId
+        }
         self.session.add(ojUserSeatList(**data))
         self.session.flush()
         self.session.commit()
@@ -251,11 +264,11 @@ class classBindingModel(dbSession):
     # 查询用户座位名单的列表user_seat_list
     # input: pageNow, pageSize
     def get_user_seat_list_info(self, pageNow: int = None, pageSize: int = None):
-        res = {"data": []}
+        data = {"res": []}
         # 求数据总数量
         query = self.session.query(func.count(ojUserSeatList.usl_id)).filter()
         totalNum = query.scalar()
-        res["totalNums"] = totalNum
+        data["totalNum"] = totalNum
 
         if pageNow is None:
             pageNow = 1
@@ -266,7 +279,7 @@ class classBindingModel(dbSession):
 
         # 求总页数
         totalPage = totalNum // pageSize
-        res["totalPages"] = totalPage
+        data["totalPage"] = totalPage
 
         # 列出所有符合条件的数据
         qc = self.session.query(ojUserSeatList).filter().all()
@@ -274,13 +287,13 @@ class classBindingModel(dbSession):
         query = self.session.query(ojUserSeatList).filter().offset((pageNow - 1) * pageSize).limit(pageSize).all()
 
         for obj in query:
-            data = {
+            res = {
                 "name": obj.name,
                 "groupId": obj.groupId,
             }
-            res["data"].append(data)
+            data["res"].append(res)
 
-        return res
+        return data
 
     # 根据名单名称查询整个名单，教室，座号，助教名称
     # input: name, pageNow, pageSize
@@ -298,7 +311,7 @@ class classBindingModel(dbSession):
             ojClassUser.usl_id == usl_id
         )
         totalNum = query.scalar()
-        res["totalNums"] = totalNum
+        res["totalNum"] = totalNum
 
         if pageNow is None:
             pageNow = 1
@@ -309,7 +322,7 @@ class classBindingModel(dbSession):
 
         # 求总页数
         totalPage = totalNum // pageSize
-        res["totalPages"] = totalPage
+        res["totalPage"] = totalPage
 
         query = self.session.query(ojClassUser).filter(
             ojClassUser.usl_id == usl_id
@@ -363,7 +376,7 @@ class classBindingModel(dbSession):
         )
 
         totalNum = query.scalar()
-        res["totalNums"] = totalNum
+        res["totalNum"] = totalNum
 
         if pageNow is None:
             pageNow = 1
@@ -374,7 +387,7 @@ class classBindingModel(dbSession):
 
         # 求总页数
         totalPage = totalNum // pageSize
-        res["totalPages"] = totalPage
+        res["totalPage"] = totalPage
 
         query = self.session.query(ojClassUser).filter(
             and_(ojClassUser.usl_id == usl_id, ojClassUser.username == username)
@@ -473,8 +486,8 @@ class classBindingModel(dbSession):
 
         res = {
             "rows": [],
-            "totalNums": totalNum,
-            "totalPages": totalPage
+            "totalNum": totalNum,
+            "totalPage": totalPage
         }
         for obj in query:
             TA_id = obj.TA_id
@@ -560,7 +573,6 @@ class classBindingModel(dbSession):
             "usl_id": usl_id,
             "c_id": c_id
         }
-        data = self.jsonDumps(data, ["TA_id", "TA_name", "usl_id", "c_id"])
 
         self.session.add(ojClassManageUser(**data))
         self.session.flush()
