@@ -298,6 +298,7 @@ class classBindingModel(dbSession):
 
         for obj in query:
             res = {
+                "usl_id": obj.usl_id,
                 "name": obj.name,
                 "groupId": obj.groupId,
             }
@@ -430,6 +431,7 @@ class classBindingModel(dbSession):
             ).first()
             TA_name = q_TA_name.TA_name if q_TA_name else None
             data = {
+                "usl_id": usl_id,
                 "username": username,
                 "c_name": c_name,
                 "s_number": s_number,
