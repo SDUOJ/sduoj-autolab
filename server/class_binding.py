@@ -82,7 +82,7 @@ async def get_all_info(name: str, pageNow: int = None, pageSize: int = None):
 async def get_single_user_info(groupId: int, username: int, pageNow: int = None, pageSize: int = None):
     db = classBindingModel()
     res = db.get_single_user_info(groupId, username, pageNow, pageSize)
-    return res
+    return makeResponse(res)
 
 
 # 查找座位IP
@@ -114,7 +114,7 @@ async def check_TA_info(usl_id: int, pageNow: int = None, pageSize: int = None):
 async def check_list_info(usl_id: int, pageNow: int = None, pageSize: int = None):
     db = classBindingModel()
     res = db.check_list_info(usl_id, pageNow, pageSize)
-    return res
+    return makeResponse(res)
 
 
 # 新建助教
@@ -127,7 +127,7 @@ async def create_TA(data: dict):
 
 # 删除助教
 @router.post("/seatList/deleteTA")
-async def delete_TA(data: dict):
+async def delete_TA(data: list):
     db = classBindingModel()
     db.delete_TA(data)
     return makeResponse(None)

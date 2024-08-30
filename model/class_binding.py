@@ -115,7 +115,6 @@ class classBindingModel(dbSession):
             update_sdata["no_use_seat_id"].append(s_id)
 
         if c_name is not None:
-
             # if c_seat_num is not None:
             #     update_cdata["c_seat_num"] = c_seat_num
             if c_description is not None:
@@ -125,6 +124,12 @@ class classBindingModel(dbSession):
             if address is not None:
                 update_cdata["address"] = address
 
+        # 先清空之前的不可用设置
+        self.session.query(ojSeat).filter(
+            ojSeat.c_id == c_id
+        ).update({"s_tag": 1})
+
+        # 再进行新的座椅设置
         if update_cdata:
             self.session.query(ojClass).filter(
                 ojClass.c_id == c_id
@@ -264,7 +269,7 @@ class classBindingModel(dbSession):
     # 查询用户座位名单的列表user_seat_list
     # input: pageNow, pageSize
     def get_user_seat_list_info(self, pageNow: int = None, pageSize: int = None):
-        data = {"res": []}
+        data = {"rows": []}
         # 求数据总数量
         query = self.session.query(func.count(ojUserSeatList.usl_id)).filter()
         totalNum = query.scalar()
@@ -275,7 +280,12 @@ class classBindingModel(dbSession):
         if pageSize is None:
             pageSize = totalNum
         if totalNum == 0:
-            return HTTPException(status_code=400, detail="没有数据")
+            data = {
+                "rows": [],
+                "totalNum": 0,
+                "totalPage": 1
+            }
+            return data
 
         # 求总页数
         totalPage = totalNum // pageSize
@@ -288,10 +298,11 @@ class classBindingModel(dbSession):
 
         for obj in query:
             res = {
+                "usl_id": obj.usl_id,
                 "name": obj.name,
                 "groupId": obj.groupId,
             }
-            data["res"].append(res)
+            data["rows"].append(res)
 
         return data
 
@@ -362,7 +373,7 @@ class classBindingModel(dbSession):
     # 查询单人信息
     # input: groupId, username
     def get_single_user_info(self, groupId: int, username: int, pageNow: int = None, pageSize: int = None):
-        res = {"data": []}
+        res = {"rows": []}
 
         # 根据groupId查usl_id
         q_usl_id = self.session.query(ojUserSeatList).filter(
@@ -383,7 +394,12 @@ class classBindingModel(dbSession):
         if pageSize is None:
             pageSize = totalNum
         if totalNum == 0:
-            return HTTPException(status_code=400, detail="没有数据")
+            res = {
+                "rows": [],
+                "totalNum": 0,
+                "totalPage": 1
+            }
+            return res
 
         # 求总页数
         totalPage = totalNum // pageSize
@@ -406,22 +422,23 @@ class classBindingModel(dbSession):
             q_c_name = self.session.query(ojClass).filter(
                 ojClass.c_id == c_id
             ).first()
-            c_name = q_c_name.c_name if q_c_name.c_name is not None else None
+            c_name = q_c_name.c_name if q_c_name else None
             address = q_c_name.address
 
             # 查询TA_name
             q_TA_name = self.session.query(ojClassManageUser).filter(
                 and_(ojClassManageUser.usl_id == usl_id, ojClassManageUser.c_id == c_id)
             ).first()
-            TA_name = q_TA_name.TA_name if q_TA_name.TA_name is not None else None
+            TA_name = q_TA_name.TA_name if q_TA_name else None
             data = {
+                "usl_id": usl_id,
                 "username": username,
                 "c_name": c_name,
                 "s_number": s_number,
                 "TA_name": TA_name,
                 "address": address
             }
-            res["data"].append(data)
+            res["rows"].append(data)
 
         return res
 
@@ -471,7 +488,12 @@ class classBindingModel(dbSession):
         totalNum = query.scalar()
 
         if totalNum == 0:
-            return HTTPException(status_code=400, detail="没有助教")
+            res = {
+                "rows": [],
+                "totalNum": 0,
+                "totalPage": 1
+            }
+            return res
 
         if pageNow is None:
             pageNow = 1
@@ -514,11 +536,16 @@ class classBindingModel(dbSession):
         query = self.session.query(func.count(ojClassUser.usl_id)).filter(
             ojClassUser.usl_id == usl_id
         )
-        res = {"data": []}
+        res = {"rows": []}
         totalNum = query.scalar()
 
         if totalNum == 0:
-            return HTTPException(status_code=400, detail="没有数据")
+            res = {
+                "rows": [],
+                "totalNum": 0,
+                "totalPage": 1
+            }
+            return res
 
         if pageNow is None:
             pageNow = 1
@@ -526,8 +553,8 @@ class classBindingModel(dbSession):
             pageSize = totalNum
 
         totalPage = totalNum // pageSize
-        res["totalNums"] = totalNum
-        res["totalPages"] = totalPage
+        res["totalNum"] = totalNum
+        res["totalPage"] = totalPage
 
         query = self.session.query(ojClassUser).filter(
             ojClassUser.usl_id == usl_id
@@ -551,7 +578,7 @@ class classBindingModel(dbSession):
                 ojSeat.s_id == s_id
             ).first().s_number
 
-            res["data"].append({
+            res["rows"].append({
                 "id": Id,
                 "username": username,
                 "c_name": c_name,
@@ -579,16 +606,16 @@ class classBindingModel(dbSession):
         self.session.commit()
 
     # 删除助教
-    # input:TA_name
-    def delete_TA(self, data: dict):
-        TA_name = data.get("TA_name")
-        query = self.session.query(ojClassManageUser).filter(
-            ojClassManageUser.TA_name == TA_name
-        )
-        for obj in query:
-            self.session.delete(obj)
-            self.session.flush()
-            self.session.commit()
+    # input:TA_id(list类型)
+    def delete_TA(self, data: list):
+        for tid in data:
+            query = self.session.query(ojClassManageUser).filter(
+                ojClassManageUser.TA_id == tid
+            )
+            for obj in query:
+                self.session.delete(obj)
+                self.session.flush()
+                self.session.commit()
 
     # 编辑助教
     # input: TA_id, TA_name, c_name
