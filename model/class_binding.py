@@ -461,11 +461,24 @@ class classBindingModel(dbSession):
         )
         s_id = query.first().s_id
 
+        s_number = self.session.query(ojSeat).filter(
+            ojSeat.s_id == s_id
+        ).first().s_number
+
+        c_id = self.session.query(ojSeat).filter(
+            ojSeat.s_id == s_id
+        ).first().c_id
+
         q_ip = self.session.query(ojSeat).filter(
             ojSeat.s_id == s_id
         )
         s_ip = q_ip.first().s_ip
-        return s_ip
+        data = {
+            "s_ip": s_ip,
+            "s_number": s_number,
+            "c_id": c_id
+        }
+        return data
 
     # 查询教室名是否已存在
     # input: c_name
