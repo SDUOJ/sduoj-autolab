@@ -4,7 +4,7 @@ import uuid
 from fastapi import HTTPException
 from sqlalchemy import and_, func
 
-from db import dbSession, ojSignUser, ojSign, ojSeat,SignIn
+from db import dbSession, ojSignUser, ojSign, ojSeat, SignIn
 
 from sduojApi import getGroupMember
 # /model/sign_in_record.py-------------------------
@@ -140,8 +140,8 @@ class signInRecordModel(dbSession):
         datanum = query.scalar()
         if datanum == 0:
             return None
-        info["totalNums"] = datanum
-        info["totalPages"] = datanum // pageSize
+        info["totalNum"] = datanum
+        info["totalPage"] = datanum // pageSize
         offsets = (pageNow - 1) * pageSize
         query = self.session.query(ojSign).filter(
             ojSign.sign_is_deleted != 1
@@ -201,10 +201,26 @@ class signInRecordModel(dbSession):
         return row
 
 
-    # 用户签到  input: username  sg_id  seat_id  sg_user_message
+    # 用户签到  input: username  sg_id  ip  sg_user_message
     def signIn(self,data: dict):
         sg_time = data["sg_time"]
+        ip = data["ip"]
+        #检查ip，防止一个机器多次签到
+        is_same_ip = self.session.query(ojSignUser).filter(
+            ojSignUser.sg_id == data["sg_id"]
+        )
+        for obj in is_same_ip:
+            if obj.ip == ip:
+                raise HTTPException(status_code=400, detail="该ip已经被使用签到过")
+            elif obj.ip is not None:
+                raise HTTPException(status_code=400, detail="该用户已签到过")
+
         data["sg_time"] = sg_time.strftime("%Y-%m-%d %H:%M:%S")
+        seat_id = self.session.query(ojSeat).filter(
+            ojSeat.s_ip == ip
+        ).first().s_id
+        data["seat_id"] = seat_id
+
         edit_row = self.session.query(ojSignUser).filter(
                     ojSignUser.sg_id == data["sg_id"], ojSignUser.username == data["username"]
                     )
@@ -214,6 +230,7 @@ class signInRecordModel(dbSession):
         edit_row.update(data)
         self.session.flush()
         self.session.commit()
+
 
 
     def getUserInfo(self, sg_id: int, username: str):
@@ -258,10 +275,10 @@ class signInRecordModel(dbSession):
              ojSignUser.username == username, ojSign.group_id == group_id, ojSign.sign_is_deleted != 1
         )
         datanum = q.count()
-        res["totalNums"] = datanum
+        res["totalNum"] = datanum
         # 得到页数
         totalpage = datanum // pageSize
-        res["totalPages"] = totalpage
+        res["totalPage"] = totalpage
 
         # 得到相关数据
         q = self.session.query(ojSignUser).join(ojSign).filter(
@@ -334,17 +351,20 @@ class signInRecordModel(dbSession):
         ).update(data)
         self.session.commit()
 
-    # 删除用户签到信息
+    # 删除用户签到信息  1:已经被删除了
     def deleteLeaveInfo(self, sg_u_id: int):
         is_existed = self.session.query(ojSignUser).filter(
             ojSignUser.sg_u_id == sg_u_id
         )
-        if is_existed.first() is None:
+        if is_existed.first() is None :
             raise HTTPException(status_code=404, detail="未找到该用户的签到信息")
-
+        elif is_existed.first().is_deleted == 1 :
+            raise HTTPException(status_code=404, detail="该用户不存在")
+        data = {}
+        data["is_deleted"] = 1
         self.session.query(ojSignUser).filter(
             ojSignUser.sg_u_id == sg_u_id
-        ).delete()
+        ).update(data)
         self.session.commit()
 
     def get_sg_id_by_username(self, username: str):

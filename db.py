@@ -447,6 +447,12 @@ class ojSignUser(Base):
     # 1 通过  0 未通过  none 审批中  2 无请假
     sg_absence_pass = Column(INTEGER, nullable=True, comment="审批信息：1 通过  0 未通过  none 审批中")
 
+    #登录ip地址
+    ip = Column(VARCHAR(63), nullable=True, unique=True, comment="登录ip地址")
+
+    #是否已经被删除
+    is_deleted = Column(INTEGER, nullable=True, comment="是否被删除")
+
     # 让sg_id  username  seat_id 联合唯一
     _table_aegs_ = (
         UniqueConstraint("sg_id", "username", "seat_id", name="u_id_seat"),
