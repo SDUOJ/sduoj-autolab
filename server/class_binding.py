@@ -90,7 +90,7 @@ async def get_single_user_info(groupId: int, username: int, pageNow: int = None,
 async def search_s_ip(data: dict):
     db = classBindingModel()
     res = db.search_s_ip(data)
-    return res
+    return makeResponse(res)
 
 
 # 查询教室名是否已存在
