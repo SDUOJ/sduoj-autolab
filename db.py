@@ -333,7 +333,7 @@ class ojClassUser(Base):
     usl_id = Column(BIGINT, ForeignKey("oj_user_seat_list.usl_id"), nullable=False)
 
     # 用户名(学号)
-    username = Column(BIGINT, nullable=False, index=True)
+    username = Column(VARCHAR(50), nullable=False, index=True)
 
     # 座位id,外键,唯一标识
     s_id = Column(BIGINT, ForeignKey("oj_seat.s_id"), nullable=False)
