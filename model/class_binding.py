@@ -444,10 +444,7 @@ class classBindingModel(dbSession):
 
     # 查询座位IP
     # input: groupId, username
-    def search_s_ip(self, data: dict):
-
-        groupId = data.get("groupId")
-        username = data.get("username")
+    def search_s_ip(self, groupId: int, username: str):
 
         # 根据groupId查usl_id
         q_usl_id = self.session.query(ojUserSeatList).filter(

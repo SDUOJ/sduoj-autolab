@@ -87,9 +87,9 @@ async def get_single_user_info(groupId: int, username: int, pageNow: int = None,
 
 # 查找座位IP
 @router.get("/searchIP")
-async def search_s_ip(data: dict):
+async def search_s_ip(groupId: int, username: str):
     db = classBindingModel()
-    res = db.search_s_ip(data)
+    res = db.search_s_ip(groupId, username)
     return makeResponse(res)
 
 
