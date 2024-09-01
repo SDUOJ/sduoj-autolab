@@ -5,6 +5,7 @@ from fastapi import HTTPException, File, UploadFile
 from sqlalchemy import and_, func, delete
 
 from db import dbSession, ojClass, ojSeat, ojClassUser, ojUserSeatList, ojClassManageUser
+from ser.class_binding import userSeatListType
 
 
 # /model/class_binding.py ------------------------------------------
@@ -14,6 +15,14 @@ class classBindingModel(dbSession):
     # input: c_name, c_seat_num, c_description ,address ,[不可用的s_number]
     def classroom_create(self, data: dict):
         c_name = data.get("c_name")
+        # 检查教室名是否重复
+        judge_c_name = self.session.query(ojClass).filter(
+            ojClass.c_name == c_name
+        ).first()  # 执行查询并获取第一条记录
+
+        if judge_c_name is not None:
+            raise HTTPException(status_code=400, detail="教室名重复")
+
         c_seat_num = data.get("c_seat_num")
         c_description = data.get("c_description")
         c_is_available = data.get("c_is_available")
@@ -236,14 +245,11 @@ class classBindingModel(dbSession):
 
     # 新建用户座位名单
     # input:name, groupId
-    def create_seat_list(self, data: dict):
-        usl_id = data.get("usl_id")
-        name = data.get("name")
-        groupId = data.get("groupId")
+    def create_seat_list(self, data: userSeatListType):
         data = {
-            "usl_id": usl_id,
-            "name": name,
-            "groupId": groupId
+            "usl_id": data.usl_id,
+            "name": data.name,
+            "groupId": data.groupId
         }
         self.session.add(ojUserSeatList(**data))
         self.session.flush()
@@ -251,15 +257,12 @@ class classBindingModel(dbSession):
 
     # 编辑用户座位名单和教室座位绑定表
     # input:已经存在的usl_id, name, groupId
-    def edit_seat_list(self, data: dict):
-        usl_id = data.get("usl_id")
-        name = data.get("name")
-        groupId = data.get("groupId")
-
+    def edit_seat_list(self, data: userSeatListType):
+        usl_id = data.usl_id
         data = {
-            "usl_id": usl_id,
-            "name": name,
-            "groupId": groupId
+            "usl_id": data.usl_id,
+            "name": data.name,
+            "groupId": data.groupId
         }
         self.session.query(ojUserSeatList).filter(
             ojUserSeatList.usl_id == usl_id
@@ -706,3 +709,46 @@ class classBindingModel(dbSession):
 
             self.session.merge(record)
             self.session.commit()
+
+    # 查询对应教室的所有ip
+    async def get_all_ip(self, c_id: int, pageNow: int = None, pageSize: int = None):
+        # 查询对应教室中的所有座位
+        query = self.session.query(func.count(ojSeat.s_id)).filter(
+            ojSeat.c_id == c_id
+        )
+        res = {"rows": []}
+        totalNum = query.scalar()
+
+        if totalNum == 0:
+            res = {
+                "rows": [],
+                "totalNum": 0,
+                "totalPage": 1
+            }
+            return res
+
+        if pageNow is None:
+            pageNow = 1
+        if pageSize is None:
+            pageSize = totalNum
+
+        totalPage = totalNum // pageSize
+        res["totalNum"] = totalNum
+        res["totalPage"] = totalPage
+
+        query = self.session.query(ojSeat).filter(
+            ojSeat.c_id == c_id
+        ).offset((pageNow - 1) * pageSize).limit(pageSize).all()
+
+        for obj in query:
+            res["rows"].append({
+                "s_id": obj.s_id,
+                "s_number": obj.s_number,
+                "s_tag": obj.s_tag,
+                "s_ip": obj.s_ip
+            })
+
+        return res
+
+
+
