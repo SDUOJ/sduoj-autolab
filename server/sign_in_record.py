@@ -16,8 +16,8 @@ router = APIRouter(
 # 创造签到信息 1
 @router.post("/sign/create")
 async def signCreate(data: dict = Depends(sign_create)):
-    db=signInRecordModel()
-    db.createSign(data)
+    db = signInRecordModel()
+    await db.createSign(data)
     return makeResponse(None)
 
 
