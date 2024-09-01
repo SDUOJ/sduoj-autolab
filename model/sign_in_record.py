@@ -9,9 +9,8 @@ from db import dbSession, ojSignUser, ojSign, ojSeat, SignIn
 from sduojApi import getGroupMember
 # /model/sign_in_record.py-------------------------
 class signInRecordModel(dbSession):
-
     # 新建一个签到  input: mode  group_id  m_group_id  title  gmtStart  gmtEnd  seat_bind
-    def createSign(self, data: dict):
+    async def createSign(self, data: dict):
         # 在sign表中建立签到
         gmtStart = data["gmtStart"]
         gmtEnd = data["gmtEnd"]
@@ -35,16 +34,16 @@ class signInRecordModel(dbSession):
             ojSign.gmtEnd == data["gmtEnd"], ojSign.u_gmt_create == u_gmt_create,
             ojSign.u_gmt_modified == u_gmt_modified
         ).first()
-        sg_id = get_sg_id.sg_id
-        name = self.session.query(SignIn).filter(
-            SignIn.groupId == data["group_id"]
-        ).all()
         info = {}
-        for obj in name:
-            info["username"] = obj.username
-            info["sg_id"] = sg_id
+        sg_id = get_sg_id.sg_id
+        info["sg_id"] = sg_id
+        names = await getGroupMember(data["group_id"])
+        names = names.get("members")
+        for obj in names:
+            q = obj["username"]
+            info["username"] = q
             self.session.add(ojSignUser(**info))
-        self.session.flush()
+            self.session.flush()
         self.session.commit()
 
 
@@ -93,10 +92,11 @@ class signInRecordModel(dbSession):
     def deleteSign(self, sg_id:int):
         is_deleted = self.session.query(ojSign).filter(
             ojSign.sg_id == sg_id
-        ).first().sign_is_deleted
-        if is_deleted == 1:
+        ).first()
+        if is_deleted is None:
             raise HTTPException(status_code=404, detail="查询无该签到")
-
+        if is_deleted.sign_is_deleted == 1:
+            raise HTTPException(status_code=404, detail="签到已处于被删除状态")
         self.session.query(ojSign).filter(
             ojSign.sg_id == sg_id
         ).update({"sign_is_deleted": 1})
@@ -202,24 +202,32 @@ class signInRecordModel(dbSession):
 
 
     # 用户签到  input: username  sg_id  ip  sg_user_message
-    def signIn(self,data: dict):
+    def signIn(self, data: dict):
         sg_time = data["sg_time"]
         ip = data["ip"]
         #检查ip，防止一个机器多次签到
         is_same_ip = self.session.query(ojSignUser).filter(
             ojSignUser.sg_id == data["sg_id"]
         )
+
         for obj in is_same_ip:
-            if obj.ip == ip:
-                raise HTTPException(status_code=400, detail="该ip已经被使用签到过")
-            elif obj.ip is not None:
-                raise HTTPException(status_code=400, detail="该用户已签到过")
+            if obj.is_deleted == 1 :
+                raise HTTPException(status_code=404, detail="该用户已被删除")
+            elif obj.ip == ip and ip is not None:
+                raise HTTPException(status_code=400, detail="该ip已经被使用过")
+            #elif obj.sg_time is not None:
+                #raise HTTPException(status_code=400, detail="该用户已签到过")
 
         data["sg_time"] = sg_time.strftime("%Y-%m-%d %H:%M:%S")
-        seat_id = self.session.query(ojSeat).filter(
-            ojSeat.s_ip == ip
-        ).first().s_id
-        data["seat_id"] = seat_id
+        data["seat_id"] = None
+        # 区分前端是否传入ip
+        if ip is not None:
+            seat_id = self.session.query(ojSeat).filter(
+                ojSeat.s_ip == ip
+            ).first()
+            if seat_id is None:
+                raise HTTPException(status_code=404, detail="该ip未与座位绑定")
+            data["seat_id"] = seat_id.s_id
 
         edit_row = self.session.query(ojSignUser).filter(
                     ojSignUser.sg_id == data["sg_id"], ojSignUser.username == data["username"]
