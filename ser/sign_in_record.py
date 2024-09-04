@@ -13,7 +13,7 @@ import uuid
 class signInType(BaseModel):
     username: str
     sg_id: int
-    seat_id: int = None
+    ip: str = None
     sg_user_message: str = None
 
 
@@ -127,7 +127,7 @@ def checkIn(data: signInType):
         "username": data.username,
         "sg_id": data.sg_id,
         "sg_time": Now,
-        "seat_id": data.seat_id,
+        "ip": data.ip,
         "token": Token,
         "sg_user_message": data.sg_user_message,
         "sg_absence_pass": sg_absence_pass
@@ -164,7 +164,7 @@ def scanIn(data: SignInData):
 
 
 def convert_time(item: float):
-    data_time = datetime.timestamp(item)
-    format_time = data_time.strftime('%Y-%m-%d %H:%M:%S')
-    return {"date": data_time, "strdate": format_time}
+    date_time = datetime.fromtimestamp(item)
+    format_time = date_time.strftime('%Y-%m-%d %H:%M:%S')
+    return {"date": date_time, "strdate": format_time}
 

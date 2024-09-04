@@ -22,7 +22,7 @@ async def create_classroom(data: dict = Depends(createClassroom)):
 
 # 修改教室信息
 @router.post("/editClassroom")
-async def edit_classroom(data: dict = classroomEditType):
+async def edit_classroom(data: classroomEditType):
     db = classBindingModel()
     db.classroom_edit(data)
     return makeResponse(None)
@@ -47,7 +47,7 @@ async def get_available_classroom(pageNow: int = None, pageSize: int = None):
 
 # 新建用户座位名单
 @router.post("/seatList/create")
-async def create_seat_list(data: dict = userSeatListType):
+async def create_seat_list(data: userSeatListType):
     db = classBindingModel()
     db.create_seat_list(data)
     return makeResponse(None)
@@ -55,7 +55,7 @@ async def create_seat_list(data: dict = userSeatListType):
 
 # 编辑用户座位名单和教室座位绑定表
 @router.post("/seatList/edit")
-async def edit_seat_list(data: dict = userSeatListType):
+async def edit_seat_list(data: userSeatListType):
     db = classBindingModel()
     db.edit_seat_list(data)
     return makeResponse(None)
@@ -74,23 +74,23 @@ async def get_user_seat_list_info(pageNow: int = None, pageSize: int = None):
 async def get_all_info(name: str, pageNow: int = None, pageSize: int = None):
     db = classBindingModel()
     res = db.get_all_info(name, pageNow, pageSize)
-    return res
+    return makeResponse(res)
 
 
 # 查询单人信息
 @router.get("/seatList/{groupId}/{username}/seatInfo")
-async def get_single_user_info(groupId: int, username: int):
+async def get_single_user_info(groupId: int, username: int, pageNow: int = None, pageSize: int = None):
     db = classBindingModel()
-    res = db.get_single_user_info(groupId, username)
-    return res
+    res = db.get_single_user_info(groupId, username, pageNow, pageSize)
+    return makeResponse(res)
 
 
 # 查找座位IP
 @router.get("/searchIP")
-async def search_s_ip(data: dict):
+async def search_s_ip(groupId: int, username: str):
     db = classBindingModel()
-    res = db.search_s_ip(data)
-    return res
+    res = db.search_s_ip(groupId, username)
+    return makeResponse(res)
 
 
 # 查询教室名是否已存在
@@ -111,10 +111,10 @@ async def check_TA_info(usl_id: int, pageNow: int = None, pageSize: int = None):
 
 # 查询整个名单的用户，教室，座号
 @router.get("/seatList/{usl_id}/checkAllListInfo")
-async def check_list_info(usl_id: int):
+async def check_list_info(usl_id: int, pageNow: int = None, pageSize: int = None):
     db = classBindingModel()
-    res = db.check_list_info(usl_id)
-    return res
+    res = db.check_list_info(usl_id, pageNow, pageSize)
+    return makeResponse(res)
 
 
 # 新建助教
@@ -127,7 +127,7 @@ async def create_TA(data: dict):
 
 # 删除助教
 @router.post("/seatList/deleteTA")
-async def delete_TA(data: dict):
+async def delete_TA(data: list):
     db = classBindingModel()
     db.delete_TA(data)
     return makeResponse(None)
@@ -142,7 +142,7 @@ async def edit_TA(data: dict):
 
 
 # 批量绑定IP
-@router.post("/multiBindingIP")
+@router.post("/seatList/multiBindingIP")
 async def multi_ip_binding(file: UploadFile = File(...)):
     db = classBindingModel()
     await db.multi_ip_binding(file)
@@ -155,3 +155,19 @@ async def multi_seats_binding(file: UploadFile = File(...)):
     db = classBindingModel()
     await db.multi_seats_binding(file)
     return makeResponse(None)
+
+
+# 查询对应教室所有ip
+@router.get("/{c_id}/listIPInfo")
+async def get_all_ip(c_id: int, pageNow: int = None, pageSize: int = None):
+    db = classBindingModel()
+    res = await db.get_all_ip(c_id, pageNow, pageSize)
+    return makeResponse(res)
+
+
+# 下载当前IP的数据文件
+@router.get("/seatList/downloadIP")
+async def download_ip_excel():
+    db = classBindingModel()
+    res = db.download_ip_excel()
+    return res

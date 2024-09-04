@@ -333,10 +333,10 @@ class ojClassUser(Base):
     usl_id = Column(BIGINT, ForeignKey("oj_user_seat_list.usl_id"), nullable=False)
 
     # 用户名(学号)
-    username = Column(BIGINT, nullable=False, index=True)
+    username = Column(VARCHAR(50), nullable=False, index=True)
 
-    # 座位id,外键,唯一标识
-    s_id = Column(BIGINT, ForeignKey("oj_seat.s_id"), nullable=False)
+    # 座位id,外键,唯一标识,允许级联删除,可空
+    s_id = Column(BIGINT, ForeignKey("oj_seat.s_id", ondelete='CASCADE'), nullable=True)
 
 
 class ojClassManageUser(Base):
@@ -446,6 +446,12 @@ class ojSignUser(Base):
     # 是否通过审批
     # 1 通过  0 未通过  none 审批中  2 无请假
     sg_absence_pass = Column(INTEGER, nullable=True, comment="审批信息：1 通过  0 未通过  none 审批中")
+
+    #登录ip地址
+    ip = Column(VARCHAR(63), nullable=True, unique=True, comment="登录ip地址")
+
+    #是否已经被删除
+    is_deleted = Column(INTEGER, nullable=True, comment="是否被删除")
 
     # 让sg_id  username  seat_id 联合唯一
     _table_aegs_ = (

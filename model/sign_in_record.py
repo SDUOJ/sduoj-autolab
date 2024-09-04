@@ -4,14 +4,13 @@ import uuid
 from fastapi import HTTPException
 from sqlalchemy import and_, func
 
-from db import dbSession, ojSignUser, ojSign, ojSeat,SignIn
+from db import dbSession, ojSignUser, ojSign, ojSeat, SignIn
 
 from sduojApi import getGroupMember
 # /model/sign_in_record.py-------------------------
 class signInRecordModel(dbSession):
-
     # 新建一个签到  input: mode  group_id  m_group_id  title  gmtStart  gmtEnd  seat_bind
-    def createSign(self, data: dict):
+    async def createSign(self, data: dict):
         # 在sign表中建立签到
         gmtStart = data["gmtStart"]
         gmtEnd = data["gmtEnd"]
@@ -35,16 +34,16 @@ class signInRecordModel(dbSession):
             ojSign.gmtEnd == data["gmtEnd"], ojSign.u_gmt_create == u_gmt_create,
             ojSign.u_gmt_modified == u_gmt_modified
         ).first()
-        sg_id = get_sg_id.sg_id
-        name = self.session.query(SignIn).filter(
-            SignIn.groupId == data["group_id"]
-        ).all()
         info = {}
-        for obj in name:
-            info["username"] = obj.username
-            info["sg_id"] = sg_id
+        sg_id = get_sg_id.sg_id
+        info["sg_id"] = sg_id
+        names = await getGroupMember(data["group_id"])
+        names = names.get("members")
+        for obj in names:
+            q = obj["username"]
+            info["username"] = q
             self.session.add(ojSignUser(**info))
-        self.session.flush()
+            self.session.flush()
         self.session.commit()
 
 
@@ -93,10 +92,11 @@ class signInRecordModel(dbSession):
     def deleteSign(self, sg_id:int):
         is_deleted = self.session.query(ojSign).filter(
             ojSign.sg_id == sg_id
-        ).first().sign_is_deleted
-        if is_deleted == 1:
+        ).first()
+        if is_deleted is None:
             raise HTTPException(status_code=404, detail="查询无该签到")
-
+        if is_deleted.sign_is_deleted == 1:
+            raise HTTPException(status_code=404, detail="签到已处于被删除状态")
         self.session.query(ojSign).filter(
             ojSign.sg_id == sg_id
         ).update({"sign_is_deleted": 1})
@@ -140,8 +140,8 @@ class signInRecordModel(dbSession):
         datanum = query.scalar()
         if datanum == 0:
             return None
-        info["totalNums"] = datanum
-        info["totalPages"] = datanum // pageSize
+        info["totalNum"] = datanum
+        info["totalPage"] = datanum // pageSize
         offsets = (pageNow - 1) * pageSize
         query = self.session.query(ojSign).filter(
             ojSign.sign_is_deleted != 1
@@ -201,10 +201,34 @@ class signInRecordModel(dbSession):
         return row
 
 
-    # 用户签到  input: username  sg_id  seat_id  sg_user_message
-    def signIn(self,data: dict):
+    # 用户签到  input: username  sg_id  ip  sg_user_message
+    def signIn(self, data: dict):
         sg_time = data["sg_time"]
+        ip = data["ip"]
+        #检查ip，防止一个机器多次签到
+        is_same_ip = self.session.query(ojSignUser).filter(
+            ojSignUser.sg_id == data["sg_id"]
+        )
+
+        for obj in is_same_ip:
+            if obj.is_deleted == 1 :
+                raise HTTPException(status_code=404, detail="该用户已被删除")
+            elif obj.ip == ip and ip is not None:
+                raise HTTPException(status_code=400, detail="该ip已经被使用过")
+            #elif obj.sg_time is not None:
+                #raise HTTPException(status_code=400, detail="该用户已签到过")
+
         data["sg_time"] = sg_time.strftime("%Y-%m-%d %H:%M:%S")
+        data["seat_id"] = None
+        # 区分前端是否传入ip
+        if ip is not None:
+            seat_id = self.session.query(ojSeat).filter(
+                ojSeat.s_ip == ip
+            ).first()
+            if seat_id is None:
+                raise HTTPException(status_code=404, detail="该ip未与座位绑定")
+            data["seat_id"] = seat_id.s_id
+
         edit_row = self.session.query(ojSignUser).filter(
                     ojSignUser.sg_id == data["sg_id"], ojSignUser.username == data["username"]
                     )
@@ -214,6 +238,7 @@ class signInRecordModel(dbSession):
         edit_row.update(data)
         self.session.flush()
         self.session.commit()
+
 
 
     def getUserInfo(self, sg_id: int, username: str):
@@ -258,10 +283,10 @@ class signInRecordModel(dbSession):
              ojSignUser.username == username, ojSign.group_id == group_id, ojSign.sign_is_deleted != 1
         )
         datanum = q.count()
-        res["totalNums"] = datanum
+        res["totalNum"] = datanum
         # 得到页数
         totalpage = datanum // pageSize
-        res["totalPages"] = totalpage
+        res["totalPage"] = totalpage
 
         # 得到相关数据
         q = self.session.query(ojSignUser).join(ojSign).filter(
@@ -334,17 +359,20 @@ class signInRecordModel(dbSession):
         ).update(data)
         self.session.commit()
 
-    # 删除用户签到信息
+    # 删除用户签到信息  1:已经被删除了
     def deleteLeaveInfo(self, sg_u_id: int):
         is_existed = self.session.query(ojSignUser).filter(
             ojSignUser.sg_u_id == sg_u_id
         )
-        if is_existed.first() is None:
+        if is_existed.first() is None :
             raise HTTPException(status_code=404, detail="未找到该用户的签到信息")
-
+        elif is_existed.first().is_deleted == 1 :
+            raise HTTPException(status_code=404, detail="该用户不存在")
+        data = {}
+        data["is_deleted"] = 1
         self.session.query(ojSignUser).filter(
             ojSignUser.sg_u_id == sg_u_id
-        ).delete()
+        ).update(data)
         self.session.commit()
 
     def get_sg_id_by_username(self, username: str):
@@ -362,7 +390,16 @@ class signInRecordModel(dbSession):
             ojSignUser.sg_id == data["sg_id"]
         ).first()
         if user_query:
-            info["token"] = user_query.token
+            if user_query.token:
+                info["token"] = user_query.token
+            else:
+                Token = uuid.uuid4().hex
+                info["token"] = Token
+                self.session.query(ojSignUser).filter(
+                    ojSignUser.username == user_query.username,
+                    ojSignUser.sg_id == user_query.sg_id
+                ).update(info)
+                self.session.commit()
             return info
         else:
             Token = uuid.uuid4().hex
