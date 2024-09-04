@@ -1,4 +1,5 @@
 import os
+import platform
 import shutil
 from datetime import datetime
 from io import BytesIO
@@ -32,10 +33,13 @@ async def addRecord(data: newRecord):
     if res is None:
         return NormalResponse(code=404, message="题单不存在", data="题单不存在")
 
+    base_path = get_base_path()
+    v_path = os.path.join(base_path, str(data.bs_id) + "_" + res.name, data.u_name + "_" + datetime.now().strftime("%Y%m%d%H%M%S"))
+
     datas = {
         'bs_type': res.type,
         'bs_id': data.bs_id,
-        'v_path': "D:\\SDUOJ\\ScreenRecord\\" + str(data.bs_id)+ "_" + res.name + "\\" + data.u_name + "_" + str(datetime.now().strftime("%Y%m%d%H%M%S")) + "\\",
+        'v_path': v_path,
         'u_id': data.u_id,
         'u_name': data.u_name,
         'token': data.token,
@@ -43,12 +47,9 @@ async def addRecord(data: newRecord):
         'modify_time': datetime.now(),
         'cnt_frame': 0
     }
-    db = screenRecordModel()
     db.add_record(datas)
     return NormalResponse(code=0, message="记录添加成功", data="记录添加成功")
 
-
-# 追加帧
 @router.post("/addFrame")
 async def addFrame(token: str = Form(...), pic: UploadFile = File(...)):
     db = screenRecordModel()
@@ -86,7 +87,6 @@ async def addFrame(token: str = Form(...), pic: UploadFile = File(...)):
 
     print(f"Frame added successfully: {frame_path}")
     return NormalResponse(code=0, message="追加帧成功", data="追加帧成功")
-
 
 # 获取有录屏记录的题单列表
 @router.get("/getPSList")
@@ -201,3 +201,14 @@ async def deleteAll(bs_id: int):
             shutil.rmtree(path)
 
     return NormalResponse(code=0, message="所有视频记录已删除", data="所有视频记录已删除")
+
+def get_base_path():
+    system = platform.system()
+    if system == "Windows":
+        return "D:\\SDUOJ\\ScreenRecord"
+    elif system == "Linux":
+        return "/var/SDUOJ/ScreenRecord"
+    elif system == "Darwin":  # macOS
+        return "/Users/Shared/SDUOJ/ScreenRecord"
+    else:
+        raise Exception("Unsupported operating system")

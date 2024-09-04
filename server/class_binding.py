@@ -22,7 +22,7 @@ async def create_classroom(data: dict = Depends(createClassroom)):
 
 # 修改教室信息
 @router.post("/editClassroom")
-async def edit_classroom(data: dict = classroomEditType):
+async def edit_classroom(data: classroomEditType):
     db = classBindingModel()
     db.classroom_edit(data)
     return makeResponse(None)
@@ -142,7 +142,7 @@ async def edit_TA(data: dict):
 
 
 # 批量绑定IP
-@router.post("/multiBindingIP")
+@router.post("/seatList/multiBindingIP")
 async def multi_ip_binding(file: UploadFile = File(...)):
     db = classBindingModel()
     await db.multi_ip_binding(file)
@@ -163,3 +163,11 @@ async def get_all_ip(c_id: int, pageNow: int = None, pageSize: int = None):
     db = classBindingModel()
     res = await db.get_all_ip(c_id, pageNow, pageSize)
     return makeResponse(res)
+
+
+# 下载当前IP的数据文件
+@router.get("/seatList/downloadIP")
+async def download_ip_excel():
+    db = classBindingModel()
+    res = db.download_ip_excel()
+    return res
