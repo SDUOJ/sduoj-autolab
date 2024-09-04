@@ -4,7 +4,6 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import session
 
-from model.class_binding import classBindingModel
 from db import ojClass, dbSession
 
 
@@ -69,13 +68,12 @@ def createClassroom(data: dict):
     no_use_seat = data.get("s_number", [])
 
     if not c_name:
-        raise HTTPException(status_code=400, detail="教室名称重复或为空")
+        raise HTTPException(status_code=400, detail="教室名称为空")
     elif not c_seat_num:
         raise HTTPException(status_code=400, detail="教室座位数量应为正整数")
     elif not c_description:
         raise HTTPException(status_code=400, detail="应写入教室描述")
 
-    temp = classBindingModel()
     # c_available 默认为 True
     data = {
         "c_name": c_name,

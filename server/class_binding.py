@@ -47,7 +47,7 @@ async def get_available_classroom(pageNow: int = None, pageSize: int = None):
 
 # 新建用户座位名单
 @router.post("/seatList/create")
-async def create_seat_list(data: dict = userSeatListType):
+async def create_seat_list(data: userSeatListType):
     db = classBindingModel()
     db.create_seat_list(data)
     return makeResponse(None)
@@ -55,7 +55,7 @@ async def create_seat_list(data: dict = userSeatListType):
 
 # 编辑用户座位名单和教室座位绑定表
 @router.post("/seatList/edit")
-async def edit_seat_list(data: dict = userSeatListType):
+async def edit_seat_list(data: userSeatListType):
     db = classBindingModel()
     db.edit_seat_list(data)
     return makeResponse(None)
@@ -155,3 +155,11 @@ async def multi_seats_binding(file: UploadFile = File(...)):
     db = classBindingModel()
     await db.multi_seats_binding(file)
     return makeResponse(None)
+
+
+# 查询对应教室所有ip
+@router.get("/{c_id}/listIPInfo")
+async def get_all_ip(c_id: int, pageNow: int = None, pageSize: int = None):
+    db = classBindingModel()
+    res = await db.get_all_ip(c_id, pageNow, pageSize)
+    return makeResponse(res)
