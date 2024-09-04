@@ -35,7 +35,7 @@ async def addRecord(data: newRecord):
     datas = {
         'bs_type': res.type,
         'bs_id': data.bs_id,
-        'v_path': "D:\\SDUOJ\\ScreenRecord\\" + str(data.bs_id)+ "_" + res.name + "\\" + data.u_name + "_" + str(datetime.now().strftime("%Y%m%d%H%M%S")) + "\\",
+        'v_path': "D:\\SDUOJ\\ScreenRecord\\" + str(data.bs_id)+ "_" + res.name + "\\" + data.u_name + "_" + str(datetime.now().strftime("%Y%m%d%H%M%S")),
         'u_id': data.u_id,
         'u_name': data.u_name,
         'token': data.token,
