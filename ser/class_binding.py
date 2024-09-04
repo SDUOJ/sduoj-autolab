@@ -13,7 +13,6 @@ from db import ojClass, dbSession
 class classroomType(BaseModel):
     # 记录所有的教室信息
 
-    # c_id: int  # 教室id
     c_name: str  # 教室名
     c_seat_num: int  # 教室的座位数量
     c_description: Union[str, None]  # 教室描述
@@ -22,7 +21,10 @@ class classroomType(BaseModel):
 
 
 class classroomEditType(BaseModel):
+    # 修改教室信息
+    c_id: int   # 教室id
     c_name: str  # 教室名
+    c_seat_num: int  # 座位数量
     c_description: Union[str, None]  # 教室描述
     c_is_available: int  # 教室是否可用
     address: str  # 教室在哪个楼上

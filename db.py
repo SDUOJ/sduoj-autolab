@@ -335,8 +335,8 @@ class ojClassUser(Base):
     # 用户名(学号)
     username = Column(VARCHAR(50), nullable=False, index=True)
 
-    # 座位id,外键,唯一标识
-    s_id = Column(BIGINT, ForeignKey("oj_seat.s_id"), nullable=False)
+    # 座位id,外键,唯一标识,允许级联删除,可空
+    s_id = Column(BIGINT, ForeignKey("oj_seat.s_id", ondelete='CASCADE'), nullable=True)
 
 
 class ojClassManageUser(Base):
