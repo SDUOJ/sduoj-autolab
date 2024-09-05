@@ -166,28 +166,65 @@ class signInRecordModel(dbSession):
 
 
     # 查询一个签到中的所有签到用户 006
-    def getUserSign(self, sg_id: int):
+    def getUserSign(self, pageSize: int, pageNow:int, sg_id:int, mode:int):
+        info = {"rows": []}
+        # 判断sg_id合法性
         is_deleted = self.session.query(ojSign).filter(
             ojSign.sg_id == sg_id
         ).first().sign_is_deleted
         if is_deleted == 1:
             raise HTTPException(status_code=404, detail="查询无该签到")
+        # 计算数据量
+        querys = self.session.query(ojSign).filter()
+        if mode == 0:
+            querys = self.session.query(func.count(ojSignUser.sg_u_id)).filter(
+                ojSignUser.sg_time.is_(None),
+                ojSignUser.sg_id == sg_id,
+                ojSignUser.is_deleted.is_(None)
+            )
+        elif mode == 1:
+            querys = self.session.query(func.count(ojSignUser.sg_u_id)).filter(
+                ojSignUser.sg_time.is_not(None),
+                ojSignUser.sg_id == sg_id,
+                ojSignUser.is_deleted.is_(None)
+            )
+        elif mode == 2:
+            querys = self.session.query(func.count(ojSignUser.sg_u_id)).filter(
+                ojSignUser.sg_id == sg_id,
+                ojSignUser.is_deleted.is_(None)
+            )
 
-        row = []
+        datanum = querys.scalar()
+        if datanum == 0:
+            return None
+        # 计算数据偏移量
+        offsets = pageSize * (pageNow - 1)
+        info["totalNum"] = datanum
+        info["totalPage"] = datanum // pageSize
         # 得到相关签到数据集
-        query = self.session.query(ojSignUser).filter(
-            ojSignUser.sg_id == sg_id
-        ).all()
-
-        for obj in query:
-            signInfo = self.session.query(ojSignUser).filter(
-                ojSignUser.sg_id == obj.sg_id
-            ).first()
+        # 0:未签到  1：签到  2：所有
+        if mode == 0:
+            querys = self.session.query(ojSignUser).filter(
+                ojSignUser.sg_id == sg_id ,
+                ojSignUser.is_deleted.is_(None) ,
+                ojSignUser.sg_time.is_(None)
+            )
+        elif mode == 1:
+            querys = self.session.query(ojSignUser).filter(
+                ojSignUser.sg_id == sg_id,
+                ojSignUser.is_deleted.is_(None),
+                ojSignUser.sg_time. is_not(None)
+            )
+        elif mode == 2:
+            querys = self.session.query(ojSignUser).filter(
+                ojSignUser.sg_id == sg_id ,
+                ojSignUser.is_deleted.is_(None)
+            )
+        for obj in querys:
             if obj.sg_time is not None:
                 sg_time = obj.sg_time.timestamp() * 1000.0
             else:
                 sg_time = 0
-
             data = {
             "sg_u_id": obj.sg_u_id ,
             "username": obj.username ,
@@ -196,9 +233,9 @@ class signInRecordModel(dbSession):
             "sg_u_message": obj.sg_user_message ,
             "sg_absence_pass": obj.sg_absence_pass
             }
-            row.append(data)
+            info["rows"].append(data)
 
-        return row
+        return info
 
 
     # 用户签到  input: username  sg_id  ip  sg_user_message
