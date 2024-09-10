@@ -56,7 +56,7 @@ async def signList(pageSize: int = Query(10, alias="pageSize"), pageNow: int = Q
 # 查询一个sg_id中的用户签到信息 6
 @router.get("/sign/userInfoList")
 async def signList(pageSize: int = Query(10, alias="pageSize"), pageNow: int = Query(1, alias="pageNow"),
-                   sg_id: int = Query(0, alias="sg_id"), mode: int = Query(1, alias="mode")):
+                   sg_id: int = Query(0, alias="sg_id"), mode: int = Query(2, alias="mode")):
     db = signInRecordModel()
     info = db.getUserSign(pageSize, pageNow, sg_id, mode)
     return makeResponse(info)
