@@ -193,6 +193,12 @@ class signInRecordModel(dbSession):
                 ojSignUser.sg_id == sg_id,
                 ojSignUser.is_deleted.is_(None)
             )
+        elif mode == 3:
+            querys = self.session.query(func.count(ojSignUser.sg_u_id)).filter(
+                ojSignUser.sg_id == sg_id,
+                ojSignUser.is_deleted.is_(None),
+                ojSignUser.sg_user_message.is_not(None)
+            )
 
         datanum = querys.scalar()
         if datanum == 0:
@@ -219,6 +225,12 @@ class signInRecordModel(dbSession):
             querys = self.session.query(ojSignUser).filter(
                 ojSignUser.sg_id == sg_id ,
                 ojSignUser.is_deleted.is_(None)
+            )
+        elif mode == 3:
+            querys = self.session.query(ojSignUser).filter(
+                ojSignUser.sg_id == sg_id ,
+                ojSignUser.is_deleted.is_(None),
+                ojSignUser.sg_user_message.is_not(None)
             )
         for obj in querys:
             if obj.sg_time is not None:
