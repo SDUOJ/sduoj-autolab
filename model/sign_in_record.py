@@ -202,13 +202,13 @@ class signInRecordModel(dbSession):
 
         datanum = querys.scalar()
         if datanum == 0:
-            return None
+            return info
         # 计算数据偏移量
         offsets = pageSize * (pageNow - 1)
         info["totalNum"] = datanum
         info["totalPage"] = datanum // pageSize
         # 得到相关签到数据集
-        # 0:未签到  1：签到  2：所有
+        # 0:未签到  1：签到  2：所有  3：筛选出sg_message不为空的数据
         if mode == 0:
             querys = self.session.query(ojSignUser).filter(
                 ojSignUser.sg_id == sg_id ,
