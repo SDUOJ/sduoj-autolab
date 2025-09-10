@@ -4,7 +4,6 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
 from starlette.exceptions import HTTPException
-from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from server import answer_sheet, objective, \
@@ -25,16 +24,7 @@ app.include_router(sign_in_record.router)
 app.include_router(class_binding.router)
 app.include_router(test.router)
 
-origins = [
-    "*"
-]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,  # 允许的源列表
-    allow_credentials=True,  # 允许返回 cookies
-    allow_methods=["*"],  # 允许所有 HTTP 方法
-    allow_headers=["*"],  # 允许所有 HTTP 头
-)
+# 已移除全局 CORS 中间件，避免自动添加 Access-Control-Allow-Origin 头。
 
 
 @app.exception_handler(HTTPException)  # 自定义HttpRequest 请求异常
