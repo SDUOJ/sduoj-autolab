@@ -1,7 +1,7 @@
 from typing import Optional, Union, List
 
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, root_validator
 
 from auth import cover_header, problem_set_user, problem_set_manager
 from sduojApi import getUserId
@@ -33,10 +33,47 @@ class publicCheckPointType(BaseModel):
     type: int
 
 
+class FileAnswerType(BaseModel):
+    """主观题文件型提交单文件条目
+    兼容以下可能的前端 key / 误写：
+      fileId / fileid
+      fileName / filename
+    并防御错误解析导致 fileId 取到 'fileName' 的情况。
+    """
+    fileId: str = Field(..., alias='fileId')
+    fileName: Optional[str] = Field(None, alias='fileName')
+
+    @root_validator(pre=True)
+    def _normalize_keys(cls, values):  # noqa
+        if not isinstance(values, dict):
+            return values
+        # 兼容小写 key
+        if 'fileid' in values and 'fileId' not in values:
+            values['fileId'] = values['fileid']
+        if 'filename' in values and 'fileName' not in values:
+            values['fileName'] = values['filename']
+        # 若出现 fileId = 'fileName' 且真实 id 在其他字段里，尝试修正
+        if values.get('fileId') == 'fileName':
+            # 常见误传格式: {fileId: 'fileName', fileName: 'xxx'} 真实 id 遗失，只能置空
+            # 或者 {fileId: 'fileName', filename: 'xxx'}
+            # 这里让它变成空字符串, 触发后续校验提示
+            values['fileId'] = ''
+        return values
+
+    class Config:
+        allow_population_by_field_name = True
+
+
 class routerType(BaseModel):
     router: routerTypeBase
-    data: Optional[
-        Union[str, programSubmitType, List[str], publicCheckPointType]]
+    data: Optional[Union[
+        str,
+        programSubmitType,
+        List[str],
+        publicCheckPointType,
+    List[FileAnswerType],
+    FileAnswerType
+    ]]
 
 
 class routerTypeWithUsername(routerType):
@@ -45,7 +82,14 @@ class routerTypeWithUsername(routerType):
 
 
 class routerTypeWithData(routerTypeWithUsername):
-    data: Union[str, programSubmitType, List[str], publicCheckPointType]
+    data: Union[
+        str,
+        programSubmitType,
+        List[str],
+        publicCheckPointType,
+        List[FileAnswerType],
+        FileAnswerType
+    ]
 
 
 class submissionListType(BaseModel):
@@ -81,6 +125,8 @@ class judgeListType(page):
     username: Optional[str]
     judgeLock: Optional[str]
     hasJudge: Optional[int]
+    # 验收题队列过滤，可选；提供时仅返回加入该队列的验收题(type=2)
+    review_queue: Optional[str]
 
 
 class routerTypeBaseWithUsername(routerTypeBase):
@@ -140,7 +186,8 @@ async def ser_judge_list(
         "pi": pi,
         "psid": data.psid,
         "judgeLock": data.judgeLock,
-        "hasJudge": data.hasJudge
+        "hasJudge": data.hasJudge,
+        "review_queue": data.review_queue
     }
 
 
@@ -212,3 +259,12 @@ def save_Ipv4_info(data: routerTypeWithUsername, ip):
     db.add_ipv4_by_psid_username(
         data.router.psid, data.username, ip
     )
+
+
+class psidOnlyType(BaseModel):
+    psid: int
+
+
+async def ser_psid_only(data: psidOnlyType, SDUOJUserInfo=Depends(cover_header)):
+    await problem_set_user(data.psid, SDUOJUserInfo)
+    return {"psid": data.psid}

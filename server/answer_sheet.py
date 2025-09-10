@@ -6,7 +6,8 @@ from sduojApi import programSubmit, getSubmissionList, getSubmissionInfo, \
 from ser.answer_sheet import routerType, \
     ser_problem_set_routerType, routerTypeWithUsername, routerTypeWithData, \
     ser_problem_set_with_data, submissionListType, ser_submission_List, \
-    ser_submission_info, submissionInfo, routerTypeBase, pbcp_deal
+    ser_submission_info, submissionInfo, routerTypeBase, pbcp_deal, \
+    ser_psid_only
 from utils import makeResponse, get_random_list_by_str, get_group_hash_name, \
     deal_order_change
 
@@ -135,3 +136,10 @@ async def pbcp_del(data=Depends(ser_problem_set_with_data)):
 @router.post("/pbcp/upd")
 async def pbcp_upd(data=Depends(ser_problem_set_with_data)):
     return makeResponse(await upd_pbCheckPoint(await pbcp_deal(data)))
+
+
+@router.post("/acceptanceQueueList")
+async def acceptance_queue_list(data=Depends(ser_psid_only)):
+    db = answerSheetModel()
+    res = await db.get_acceptance_queue_list(data["psid"])  # {'problems': [...], 'queueSet': [...]}
+    return makeResponse(res.get("queueSet", []))

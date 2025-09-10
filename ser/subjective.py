@@ -24,6 +24,8 @@ class configInfo(BaseModel):
 class subjective_config(BaseModel):
     maxCount: Optional[int]
     fileList: Optional[List[fileInfo]]
+    # 验收题(type=2)可用的队列名称列表
+    review_queue: Optional[List[str]]
     judgeConfig: List[configInfo]
 
 

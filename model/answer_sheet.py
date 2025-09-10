@@ -574,6 +574,29 @@ class answerSheetModel(problemSetModel, groupModel):
         ps_info = await self.ps_get_info_detail_by_id_cache(psid, True)
         return ps_info["groupInfo"][gi]["problemInfo"][pi]
 
+    @cache(expire=60, key_builder=class_func_key_builder)
+    async def get_subjective_basic_cache(self, pid):
+        """获取主观题基础信息（含 subtype 与 review_queue），缓存减少重复查询。"""
+        pro = self.session.query(ProblemSubjective).filter(
+            ProblemSubjective.pid == pid
+        ).first()
+        if pro is None:
+            raise HTTPException(status_code=404, detail="Problem not found")
+        try:
+            cfg = json.loads(pro.config) if pro.config else {}
+        except Exception:
+            cfg = {}
+        review_queue = []
+        file_list = []
+        if isinstance(cfg, dict):
+            rq = cfg.get("review_queue", [])
+            if isinstance(rq, list):
+                review_queue = rq
+            fl = cfg.get("fileList", [])
+            if isinstance(fl, list):
+                file_list = fl
+        return {"type": pro.type, "review_queue": review_queue, "fileList": file_list}
+
     # 获取题目完成的总结性数据
     async def get_pro_report(
             self, psid, asd, gid, pid, gi, pi, username, get_code=True,
@@ -770,11 +793,49 @@ class answerSheetModel(problemSetModel, groupModel):
                 "mark": change_choice_order(info["mark"], o1),
             }
         else:
-            return {
-                **ext,
-                "answer_m": info["answer"],
-                "mark": info["mark"],
-            }
+            add_ext = {}
+            if tp == 1:
+                # 判定是否为验收题 subtype==2（使用缓存）
+                gid, pid = await self.get_gid_pid_by_psid_gi_pi_cache(
+                    data.router.psid, data.router.gid, data.router.pid
+                )
+                subj_info = await self.get_subjective_basic_cache(pid)
+                if subj_info["type"] == 2:
+                    from sqlalchemy import and_ as _and
+                    q = self.session.query(ProblemSetAnswerSheetDetail).outerjoin(
+                        ProblemSetAnswerSheet,
+                        ProblemSetAnswerSheetDetail.asid == ProblemSetAnswerSheet.asid
+                    ).filter(_and(
+                        ProblemSetAnswerSheet.psid == data.router.psid,
+                        ProblemSetAnswerSheetDetail.gid == gid,
+                        ProblemSetAnswerSheetDetail.pid == pid,
+                    ))
+                    rows = q.all()
+                    queue_entries = []  # (tm_submit, asd_id)
+                    for r in rows:
+                        if r.judgeLock_username is None and r.answer is not None:
+                            # r.answer 可能是 list/obj/str，这里只接受非空字符串为排队
+                            try:
+                                ans_val = json.loads(r.answer)
+                            except Exception:
+                                ans_val = r.answer
+                            if isinstance(ans_val, str) and ans_val.strip() != "":
+                                queue_entries.append((r.tm_answer_submit, r.asd_id))
+                    queue_entries.sort(key=lambda x: x[0] or 0)
+                    rank = None
+                    for idx, (_, asd_id_) in enumerate(queue_entries):
+                        if asd_id_ == info["asd_id"]:
+                            rank = idx + 1
+                            break
+                    cur_queue_name = ""
+                    if isinstance(info["answer"], str):
+                        cur_queue_name = info["answer"]
+                    add_ext = {
+                        "acceptanceQueue": cur_queue_name,
+                        "acceptanceRank": rank,
+                        "acceptanceFinished": info.get("judgeLock_username") is not None
+                    }
+            return {**ext, **add_ext, "answer_m": info["answer"], "mark": info["mark"]}
 
     # 更新答案信息
     async def update_answer(self, data: routerTypeWithData):
@@ -820,18 +881,83 @@ class answerSheetModel(problemSetModel, groupModel):
             )
             return len(answer) != 0
         if group["type"] == 1:
-            if len(data.data) == 1:
-                if len(data.data[0].strip()) == 0:
-                    data.data = []
+            # 使用缓存获取主观题 subtype & review_queue
+            subj_info = await self.get_subjective_basic_cache(pid)
+            subj_type = subj_info["type"]  # 0 文件 1 文本 2 验收
+
             if pro["judgeLock_username"] is not None:
                 raise HTTPException(detail="Already Judged", status_code=403)
+
+            # 文本型：期望 List[str]  (现在 1 表示文本)
+            if subj_type == 1:
+                if isinstance(data.data, list):
+                    if len(data.data) == 1 and len(data.data[0].strip()) == 0:
+                        data.data = []
+                    answer_payload = data.data
+                else:
+                    # 兼容单字符串
+                    if isinstance(data.data, str) and len(data.data.strip()) > 0:
+                        answer_payload = [data.data]
+                    else:
+                        answer_payload = []
+            elif subj_type == 0:
+                # 文件型：支持多文件，需与 config.fileList 数量一致
+                expected_files = subj_info.get("fileList", [])
+                expected_cnt = len(expected_files)
+                raw = data.data
+                file_items = []
+                if raw is None:
+                    file_items = []
+                elif isinstance(raw, list):
+                    # 可能是 FileAnswerType 列表或 dict 列表
+                    for it in raw:
+                        if hasattr(it, 'fileId'):
+                            file_items.append({"fileId": it.fileId, "fileName": getattr(it, 'fileName', None)})
+                        elif isinstance(it, dict):
+                            file_items.append({"fileId": it.get('fileId'), "fileName": it.get('fileName')})
+                        else:
+                            raise HTTPException(detail="Invalid File Item", status_code=422)
+                else:
+                    # 单个对象/字典 -> 规范化为列表
+                    if hasattr(raw, 'fileId'):
+                        file_items.append({"fileId": raw.fileId, "fileName": getattr(raw, 'fileName', None)})
+                    elif isinstance(raw, dict):
+                        file_items.append({"fileId": raw.get('fileId'), "fileName": raw.get('fileName')})
+                    else:
+                        raise HTTPException(detail="Invalid File Data", status_code=422)
+                # 基础校验：数量 & 每个 fileId 必填
+                if expected_cnt != 0 and len(file_items) != expected_cnt:
+                    raise HTTPException(detail=f"File Count Not Match Expect {expected_cnt}", status_code=422)
+                for idx, fi in enumerate(file_items):
+                    if not fi.get("fileId"):
+                        raise HTTPException(detail=f"FileId Missing At {idx}", status_code=422)
+                answer_payload = file_items
+            elif subj_type == 2:
+                # 验收题：data.data 为队列名字符串；空表示取消排队
+                queue_name = ""
+                if isinstance(data.data, str):
+                    queue_name = data.data.strip()
+                if queue_name:
+                    # 校验队列名是否在 config.review_queue 中
+                    review_queue = subj_info["review_queue"]
+                    if queue_name not in review_queue:
+                        raise HTTPException(detail="Invalid Queue Name", status_code=422)
+                    answer_payload = queue_name
+                else:
+                    answer_payload = ""  # 取消排队
+
             self.update_detail_by_asd_id(
                 pro["asd_id"], {
-                    "answer": data.data,
+                    "answer": answer_payload,
                     "tm_answer_submit": getNowTime()
                 }
             )
-            return len(data.data) != 0
+            if subj_type == 1:
+                return len(answer_payload) != 0
+            elif subj_type == 0:
+                return len(answer_payload) != 0
+            else:
+                return answer_payload != ""
         if group["type"] == 2:
             res = await programSubmit(
                 problemSetId=data.router.psid,
@@ -854,7 +980,7 @@ class answerSheetModel(problemSetModel, groupModel):
 
     # 获取带评测列表
     async def get_judge_list_by_psid_page(
-            self, psid, pg, gi, pi, username, judgeLock, hasJudge):
+            self, psid, pg, gi, pi, username, judgeLock, hasJudge, review_queue=None):
 
         # 题单结束之前，不能评阅主观题 （暂时不使用这个设定）
         # tm_start, tm_end = await self.ps_get_all_tm_by_psid_cache(psid)
@@ -915,6 +1041,12 @@ class answerSheetModel(problemSetModel, groupModel):
             ProblemSetAnswerSheet,
             ProblemSetAnswerSheetDetail.asid == ProblemSetAnswerSheet.asid
         ).filter(and_(*base_ls))
+
+        if review_queue is not None and len(review_queue.strip()) > 0:
+            cmd = cmd.filter(
+                ProblemSetAnswerSheetDetail.answer == json.dumps(review_queue)
+            ).order_by(ProblemSetAnswerSheetDetail.tm_answer_submit.asc())
+
         tn = cmd.count()
         asd_data = cmd.offset(pg.offset()).limit(pg.limit())
 
@@ -933,11 +1065,14 @@ class answerSheetModel(problemSetModel, groupModel):
         for x in asd_data:
             name = ps_info["groupInfo"][gid2gi[x.gid]]["name"]
             name += "-" + str(gid_pid2pi[str(x.gid) + "-" + str(x.pid)] + 1)
+            from sduojApi import getNickName
+            nickname = await getNickName(ids2username[x.asid])
             data.append({
                 "gid": gid2gi[x.gid],
                 "pid": gid_pid2pi[str(x.gid) + "-" + str(x.pid)],
                 "name": name,
                 "username": ids2username[x.asid],
+                "nickname": nickname,
                 "tm_answer_submit": getMsTime(
                     x.tm_answer_submit) if x.tm_answer_submit is not None else None,
                 "judgeLock": x.judgeLock_username,
@@ -1039,3 +1174,34 @@ class answerSheetModel(problemSetModel, groupModel):
         )
         asd = await self.get_detail_info_by_asd_obj(asd_obj)
         return {"problemInfo": pro, "answerSheet": asd}
+
+    # 验收题队列汇总（非缓存入口，调用缓存实现）
+    async def get_acceptance_queue_list(self, psid):
+        return await self.get_acceptance_queue_list_cache(psid)
+
+    @cache(expire=30, key_builder=class_func_key_builder)
+    async def get_acceptance_queue_list_cache(self, psid):
+        ps_info = await self.ps_get_info_by_id_cache(psid)
+        problems = []
+        queue_set = set()
+        for gi, g in enumerate(ps_info["groupInfo"]):
+            gid = g["gid"]
+            group_detail = await self.group_get_info_by_id_cache(gid)
+            if group_detail["type"] != 1:
+                continue
+            for pi, p in enumerate(group_detail["problemInfo"]):
+                pid = p["pid"]
+                subj_basic = await self.get_subjective_basic_cache(pid)
+                if subj_basic["type"] == 2:
+                    rq = subj_basic.get("review_queue", []) or []
+                    for q in rq:
+                        if q:
+                            queue_set.add(q)
+                    problems.append({
+                        "gi": gi,
+                        "pi": pi,
+                        "gid": gid,
+                        "pid": pid,
+                        "review_queue": rq
+                    })
+        return {"problems": problems, "queueSet": sorted(list(queue_set))}

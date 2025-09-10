@@ -37,12 +37,13 @@ class ProblemSubjective(Base):
 
     pid = Column(INTEGER, primary_key=True)
 
-    # 0 文本， 1 文件
+    # 0 文件， 1 文本， 2 验收题(排队)
     type = Column(INTEGER, nullable=False)
 
     # json 字符串，提交配置信息，{
     #  最大字数
     # "maxCount": 0,
+    # "review_queue": ["", ""],  # 验收队列名列表 (仅 subtype=2 使用)
     #                文件名       文件大小         文件类型
     # "fileList": [{"name": "", "maxSizeMB": 0, "fileType": ""}, ]
     #                   得分项       分数         参考答案
