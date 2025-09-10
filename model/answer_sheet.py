@@ -1062,6 +1062,15 @@ class answerSheetModel(problemSetModel, groupModel):
                     gid_pid2pi[str(g["gid"]) + "-" + str(p["pid"])] = j
 
         data = []
+        # 预取当前页涉及的主观题 subtype（0文件 1文本 2验收）
+        pid2stype = {}
+        for x in asd_data:
+            if x.pid not in pid2stype:
+                try:
+                    subj_basic = await self.get_subjective_basic_cache(x.pid)
+                    pid2stype[x.pid] = subj_basic.get("type")
+                except Exception:
+                    pid2stype[x.pid] = None
         for x in asd_data:
             name = ps_info["groupInfo"][gid2gi[x.gid]]["name"]
             name += "-" + str(gid_pid2pi[str(x.gid) + "-" + str(x.pid)] + 1)
@@ -1073,6 +1082,7 @@ class answerSheetModel(problemSetModel, groupModel):
                 "name": name,
                 "username": ids2username[x.asid],
                 "nickname": nickname,
+                "type": pid2stype.get(x.pid),
                 "tm_answer_submit": getMsTime(
                     x.tm_answer_submit) if x.tm_answer_submit is not None else None,
                 "judgeLock": x.judgeLock_username,
