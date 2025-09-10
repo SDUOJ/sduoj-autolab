@@ -102,8 +102,13 @@ class problemSetModel(dbSession):
                 res["label"].append(x.tag)
             if x.tag not in res["score"]:
                 res["score"][x.tag] = 0
-            res["score"][x.tag] += x.global_score
-            res["sum"] += x.global_score
+            # 兼容 global_score 可能为 None 的情况
+            gscore = x.global_score if x.global_score is not None else 0
+            res["score"][x.tag] += gscore
+            res["sum"] += gscore
+
+        # sum 四舍五入保留一位小数
+        res["sum"] = round(res["sum"], 1)
 
         return res
 
