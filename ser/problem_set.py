@@ -6,6 +6,7 @@ from fastapi_cache.decorator import cache
 from pydantic import BaseModel, validator, root_validator
 
 from auth import cover_header, problem_set_manager, in_group, problem_set_user
+from fastapi import Header
 from ser.base import base_add, base_page, obj2dict
 from ser.base_type import page
 from utilsTime import cover_to_dt
@@ -225,3 +226,18 @@ def ser_problem_set_key_list(data: userGroupId,
                              SDUOJUserInfo=Depends(cover_header)):
     in_group(data.groupId, SDUOJUserInfo)
     return data.groupId
+
+
+# 可选鉴权：没有 SDUOJUserInfo 时，不抛错，返回 logged=False
+def try_cover_header(SDUOJUserInfo: str = Header(None)):
+    from urllib import parse
+    import json
+    if SDUOJUserInfo is None:
+        return {"logged": False}
+    try:
+        info = json.loads(parse.unquote(SDUOJUserInfo))
+        info["logged"] = True
+        return info
+    except Exception:
+        # 解析失败也视为未登录
+        return {"logged": False}

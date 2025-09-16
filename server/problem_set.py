@@ -8,7 +8,7 @@ from ser.base import makePageResult
 from ser.problem_set import ser_problem_set_add, ser_problem_set_edit, \
     ser_problem_set_info, ser_problem_set_list, ser_problem_set_search_list, \
     ser_problem_set_key_list, ser_problem_set_info_c, \
-    ser_problem_set_info_public
+    ser_problem_set_info_public, try_cover_header
 from utils import makeResponse, deal_order_change
 
 router = APIRouter(
@@ -90,3 +90,16 @@ async def public_info(
     res["finish"] = db.get_user_finish(data["psid"], data["username"])
     res["isAdmin"] = data["isAdmin"]
     return makeResponse(res)
+
+
+# 新增接口：查询当前用户关联的 group 中，所有即将开始（1天内）或正在进行的题单
+@router.get("/upcoming")
+async def upcoming(SDUOJUserInfo=Depends(try_cover_header)):
+    # 未登录返回空
+    if not SDUOJUserInfo.get("logged"):
+        return makeResponse({"running": [], "upcoming": []})
+    from model.problem_set import problemSetModel
+    db = problemSetModel()
+    groups = SDUOJUserInfo.get("groups", [])
+    data = await db.ps_get_upcoming_running_by_groups_cache(groups)
+    return makeResponse(data)

@@ -77,6 +77,32 @@ class problemSetModel(dbSession):
             ["create_time", "tm_start", "tm_end"],
             ["groupInfo", "config"])
 
+    # 按 groupId 列表查询所有题单，返回基础信息（包含 psid/name/tm_start/tm_end/groupId/tag/config/groupInfo）
+    def ps_list_by_groups(self, groups: list):
+        if groups is None or len(groups) == 0:
+            return []
+        data = self.session.query(ProblemSet).filter(
+            ProblemSet.groupId.in_(groups)
+        ).all()
+        res = self.dealDataList(
+            data,
+            ["create_time", "tm_start", "tm_end"],
+            []
+        )
+        # 反序列化 JSON 字段
+        for i in range(len(res)):
+            if isinstance(res[i].get("config"), str):
+                try:
+                    res[i]["config"] = json.loads(res[i]["config"])
+                except Exception:
+                    pass
+            if isinstance(res[i].get("groupInfo"), str):
+                try:
+                    res[i]["groupInfo"] = json.loads(res[i]["groupInfo"])
+                except Exception:
+                    pass
+        return res
+
     @cache(expire=60, key_builder=class_func_key_builder)
     async def ps_get_list_search_info_by_page_cache(
             self, pg: page, groupId, key):
@@ -129,3 +155,110 @@ class problemSetModel(dbSession):
     async def ps_get_groupInfo_by_psid_cache(self, psid):
         obj = self.ps_get_obj_by_id(psid)
         return json.loads(obj.groupInfo)
+
+    # 带缓存：根据 group 列表获取“正在运行/即将开始”的题单列表，按组聚合并排序
+    @cache(expire=60, key_builder=class_func_key_builder)
+    async def ps_get_upcoming_running_by_groups_cache(self, groups: list):
+        from utilsTime import getNowTime, inTime
+
+        now = getNowTime()
+        one_day_ms = 24 * 60 * 60 * 1000
+
+        ps_list = self.ps_list_by_groups(groups)
+
+        running_grouped = {}
+        upcoming_grouped = {}
+
+        def add_item(target, ps, st, ed):
+            gid = ps.get("groupId")
+            if gid not in target:
+                target[gid] = {
+                    "groupId": gid,
+                    "groupTitle": None,
+                    "problemSets": []
+                }
+            target[gid]["problemSets"].append({
+                "psid": ps.get("psid"),
+                "name": ps.get("name"),
+                "startTime": str(st) if st is not None else None,
+                "endTime": str(ed) if ed is not None else None,
+                "tag": ps.get("tag")
+            })
+
+        for ps in ps_list:
+            cfg = ps.get("config") or {}
+            useSame = cfg.get("useSameSE", 0) == 1
+
+            if useSame:
+                st = ps.get("tm_start")
+                ed = ps.get("tm_end")
+                if st is None or ed is None:
+                    continue
+                try:
+                    st = int(st)
+                    ed = int(ed)
+                except Exception:
+                    continue
+                if inTime(now, st, ed):
+                    add_item(running_grouped, ps, st, ed)
+                elif now < st <= now + one_day_ms:
+                    add_item(upcoming_grouped, ps, st, ed)
+            else:
+                groupInfo = ps.get("groupInfo") or []
+                placed = False
+                for gi in groupInfo:
+                    ts_list = gi.get("timeSetting") or []
+                    for ts in ts_list:
+                        st = ts.get("tm_start")
+                        ed = ts.get("tm_end")
+                        if st is None or ed is None:
+                            continue
+                        try:
+                            st = int(st)
+                            ed = int(ed)
+                        except Exception:
+                            continue
+                        if inTime(now, st, ed):
+                            add_item(running_grouped, ps, st, ed)
+                            placed = True
+                            break
+                        if now < st <= now + one_day_ms:
+                            add_item(upcoming_grouped, ps, st, ed)
+                            placed = True
+                            break
+                    if placed:
+                        break
+
+        # 填充组名与排序
+        for gid in list(running_grouped.keys()):
+            try:
+                running_grouped[gid]["groupTitle"] = await getGroupName(gid)
+            except Exception:
+                running_grouped[gid]["groupTitle"] = None
+            running_grouped[gid]["problemSets"].sort(
+                key=lambda x: (int(x["endTime"]) if x["endTime"] is not None else 0)
+            )
+
+        for gid in list(upcoming_grouped.keys()):
+            try:
+                upcoming_grouped[gid]["groupTitle"] = await getGroupName(gid)
+            except Exception:
+                upcoming_grouped[gid]["groupTitle"] = None
+            upcoming_grouped[gid]["problemSets"].sort(
+                key=lambda x: (int(x["startTime"]) if x["startTime"] is not None else 0)
+            )
+
+        running_result = list(running_grouped.values())
+        running_result.sort(
+            key=lambda g: (int(g["problemSets"][0]["endTime"]) if g["problemSets"] else 0)
+        )
+
+        upcoming_result = list(upcoming_grouped.values())
+        upcoming_result.sort(
+            key=lambda g: (int(g["problemSets"][0]["startTime"]) if g["problemSets"] else 0)
+        )
+
+        return {
+            "running": running_result,
+            "upcoming": upcoming_result
+        }
