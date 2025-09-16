@@ -47,6 +47,7 @@ python -m gunicorn -c gunicorn.conf.py main:app
 ```shell
 ps -ef |grep main:app |awk '{print $2}'| xargs kill -9
 python -m uvicorn main:app --reload --host=0.0.0.0 --port 5005
+python -m uvicorn main:app --reload --host=127.0.0.1 --port 5005
 
 ```
 
