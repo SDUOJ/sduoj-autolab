@@ -811,7 +811,7 @@ class answerSheetModel(problemSetModel, groupModel):
                         ProblemSetAnswerSheetDetail.pid == pid,
                     ))
                     rows = q.all()
-                    queue_entries = []  # (tm_submit, asd_id)
+                    queue_entries = []  # (tm_submit, asd_id, queue_name)
                     for r in rows:
                         if r.judgeLock_username is None and r.answer is not None:
                             # r.answer 可能是 list/obj/str，这里只接受非空字符串为排队
@@ -819,17 +819,22 @@ class answerSheetModel(problemSetModel, groupModel):
                                 ans_val = json.loads(r.answer)
                             except Exception:
                                 ans_val = r.answer
-                            if isinstance(ans_val, str) and ans_val.strip() != "":
-                                queue_entries.append((r.tm_answer_submit, r.asd_id))
+                            queue_name = ans_val.strip() if isinstance(ans_val, str) else ""
+                            if queue_name:
+                                queue_entries.append((r.tm_answer_submit, r.asd_id, queue_name))
                     queue_entries.sort(key=lambda x: x[0] or 0)
                     rank = None
-                    for idx, (_, asd_id_) in enumerate(queue_entries):
-                        if asd_id_ == info["asd_id"]:
-                            rank = idx + 1
-                            break
                     cur_queue_name = ""
                     if isinstance(info["answer"], str):
-                        cur_queue_name = info["answer"]
+                        cur_queue_name = info["answer"].strip()
+                    if cur_queue_name:
+                        filtered_entries = [
+                            item for item in queue_entries if item[2] == cur_queue_name
+                        ]
+                        for idx, (_, asd_id_, _) in enumerate(filtered_entries):
+                            if asd_id_ == info["asd_id"]:
+                                rank = idx + 1
+                                break
                     add_ext = {
                         "acceptanceQueue": cur_queue_name,
                         "acceptanceRank": rank,
