@@ -7,7 +7,7 @@ from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 
 from server import answer_sheet, objective, \
-    problem_set, problem_group, subjective, subjective_judge, summary, screen_record, sign_in_record, class_binding, test
+    problem_set, problem_group, subjective, subjective_judge, summary, screen_record, sign_in_record, class_binding, test, problem_set_late
 from utilsTime import getMsTime
 
 
@@ -15,6 +15,7 @@ app = FastAPI()
 app.include_router(objective.router)
 app.include_router(answer_sheet.router)
 app.include_router(problem_set.router)
+app.include_router(problem_set_late.router)
 app.include_router(problem_group.router)
 app.include_router(subjective.router)
 app.include_router(subjective_judge.router)

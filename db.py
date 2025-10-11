@@ -149,6 +149,56 @@ class ProblemSet(Base):
     )
 
 
+class ProblemSetLatePermission(Base):
+    __tablename__ = 'problem_set_late_permission'
+
+    id = Column(INTEGER, primary_key=True, autoincrement=True)
+
+    # 对应题单
+    psid = Column(
+        INTEGER, ForeignKey("problem_set.psid"), nullable=False, index=True
+    )
+
+    # 题单所属 group，授予权限时用于校验
+    groupId = Column(INTEGER, nullable=False, index=True)
+
+    # 获得补交权限的学生
+    username = Column(VARCHAR(63), nullable=False)
+
+    # 补交持续时间（分钟）
+    duration_minute = Column(INTEGER, nullable=False)
+
+    # 折扣系数（0-1，保留浮点）
+    discount = Column(FLOAT, nullable=False)
+
+    # 第一次使用补交权限的时间
+    start_time = Column(DATETIME, nullable=True)
+
+    # 授权与更新信息
+    created_by = Column(VARCHAR(63), nullable=False)
+    updated_by = Column(VARCHAR(63), nullable=True)
+
+    create_time = Column(DATETIME, nullable=False, server_default=func.now())
+    update_time = Column(
+        DATETIME, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    # 备注与开关
+    note = Column(VARCHAR(255), nullable=True)
+    is_active = Column(TINYINT, nullable=False, server_default='1')
+
+    __table_args__ = (
+        UniqueConstraint(
+            "psid", "username",
+            name="un_problem_set_late_permission_psid_username"
+        ),
+        Index(
+            'ix_problem_set_late_permission_username_psid',
+            "username", "psid"
+        ),
+    )
+
+
 class ProblemSetAnswerSheet(Base):
     __tablename__ = 'problem_set_answer_sheet'
 

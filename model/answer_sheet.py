@@ -432,6 +432,7 @@ class answerSheetModel(problemSetModel, groupModel):
                 data["groupInfo"][i]["problemInfo"] = change_order(
                     data["groupInfo"][i]["problemInfo"], o1
                 )
+        data["latePermission"] = self._get_late_context(id_, username)
         return data
 
     # 获取单个题目详细信息
@@ -549,7 +550,14 @@ class answerSheetModel(problemSetModel, groupModel):
         return {"hasAnswer": len(answer) != 0}
 
     # 获取某个时间的得分权重, 返回的第二个参数为，是否在限时测试中
-    async def get_now_weight(self, psid, gi, time=None):
+    def _get_late_context(self, psid, username, time=None):
+        try:
+            from model.late_permission import latePermissionModel
+            return latePermissionModel().get_active_context(psid, username, time)
+        except Exception:
+            return None
+
+    async def get_now_weight(self, psid, gi, time=None, username=None):
         ps_info = await self.ps_get_info_by_id_cache(psid)
         if time is None:
             time = getNowTime()
@@ -561,12 +569,25 @@ class answerSheetModel(problemSetModel, groupModel):
             if ps_info["config"]["usePractice"] == 1:
                 for x in ps_info["config"]["practiceTimeSetting"]:
                     if inTime(time, x["tm_start"], x["tm_end"]):
-                        return x["weight"], False
+                        # 如果有特有的补题权限，优先按照单用户补题权限来算
+                        if username is not None:
+                            ctx = self._get_late_context(psid, username, time)
+                            if ctx is not None:
+                                discount = ctx.get("discount", 1)
+                                return discount, True
+                        else:
+                            return x["weight"], False
         else:
             g_timeSettingList = ps_info["groupInfo"][gi]["timeSetting"]
             for x in g_timeSettingList:
                 if inTime(time, x["tm_start"], x["tm_end"]):
                     return x["weight"], False
+
+        if username is not None:
+            ctx = self._get_late_context(psid, username, time)
+            if ctx is not None:
+                discount = ctx.get("discount", 1)
+                return discount, True
         return 0, False
 
     @cache(expire=60, key_builder=class_func_key_builder)
@@ -625,7 +646,7 @@ class answerSheetModel(problemSetModel, groupModel):
             answer_m.sort()
 
             weight, _ = await self.get_now_weight(
-                psid, gi, asd["tm_answer_submit"]
+                psid, gi, asd["tm_answer_submit"], username
             )
             res.update({
                 "mark": mark,
@@ -655,7 +676,7 @@ class answerSheetModel(problemSetModel, groupModel):
                 score = ms / al * point
 
             weight, _ = await self.get_now_weight(
-                psid, gi, asd["tm_answer_submit"]
+                psid, gi, asd["tm_answer_submit"], username
             )
 
             res.update({
@@ -689,7 +710,7 @@ class answerSheetModel(problemSetModel, groupModel):
                 if int(pro['judgeResult']) <= 0:
                     hasJudge = False
                 weight, inE = await self.get_now_weight(
-                    psid, gi, pro["gmtCreate"]
+                    psid, gi, pro["gmtCreate"], username
                 )
                 s = pro["judgeScore"] / pro["fullScore"] * proInfo[
                     "point"] * weight

@@ -135,6 +135,17 @@ async def problem_set_user(  # 提交相关交卷后不能提交，authOnly 表�
             if inGroupInfoItemTime(now, groupInfo[gi]):
                 return
 
+    # 题单时间已结束，尝试使用补交权限
+    try:
+        from model.late_permission import latePermissionModel
+        late_db = latePermissionModel()
+        ctx = late_db.get_active_permission(psid, SDUOJUserInfo["username"], now)
+        if ctx is not None:
+            return
+    except Exception:
+        # 避免补交模块异常影响原有流程
+        pass
+
     raise HTTPException(detail="Permission Denial", status_code=403)
 
 
