@@ -1,4 +1,5 @@
 import json
+import asyncio
 from typing import Union
 
 import requests
@@ -10,7 +11,7 @@ from const import SDUOJ_TOKEN, NACOS_addr, NACOS_namespace
 requestHeaders = {"sduoj-token": SDUOJ_TOKEN}
 
 
-@cache(expire=60)
+# @cache(expire=60)
 async def getService_ip_port(server_name):
     data = requests.get(
         "http://" + NACOS_addr + "/nacos/v1/ns/instance/list",
@@ -19,7 +20,10 @@ async def getService_ip_port(server_name):
             "namespaceId": NACOS_namespace
         },
     ).json()
-    r = data["hosts"][0]
+    hosts = data.get("hosts", [])
+    if not hosts:
+        raise RuntimeError(f"Service `{server_name}` not found in nacos")
+    r = hosts[0]
     return r["ip"] + ":" + str(r["port"])
 
 
@@ -213,6 +217,44 @@ async def getSubmissionList(problemSetId, ext, pop=True):
             x.pop("problemCode")
             x.pop("problemTitle")
     return data
+
+
+async def downloadFile(fileId):
+    addr = await getService_ip_port("filesys-service")
+
+    def _request():
+        resp = requests.get(
+            "http://" + addr + "/internal/filesys/download",
+            params={"fileId": fileId},
+            headers=requestHeaders,
+            stream=True
+        )
+        return resp.status_code, resp.content, dict(resp.headers)
+
+    loop = asyncio.get_running_loop()
+    status, content, headers = await loop.run_in_executor(None, _request)
+    return status, content, headers
+
+
+async def downloadFilesZip(items):
+    if not items:
+        raise ValueError("items can not be empty")
+    addr = await getService_ip_port("filesys-service")
+
+    def _request():
+        resp = requests.post(
+            "http://" + addr + "/internal/filesys/zipDownloads",
+            json=items,
+            headers=requestHeaders,
+            stream=True
+        )
+        print("http://" + addr + "/internal/filesys/zipDownloads")
+        print(resp.status_code, resp.headers)
+        return resp.status_code, resp.content, dict(resp.headers)
+
+    loop = asyncio.get_running_loop()
+    status, content, headers = await loop.run_in_executor(None, _request)
+    return status, content, headers
 
 
 @cache(expire=60)

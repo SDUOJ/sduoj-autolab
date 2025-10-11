@@ -1,4 +1,9 @@
+import re
+from io import BytesIO
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException
+from starlette.responses import StreamingResponse
 
 from model.answer_sheet import answerSheetModel
 from sduojApi import programSubmit, getSubmissionList, getSubmissionInfo, \
@@ -7,7 +12,7 @@ from ser.answer_sheet import routerType, \
     ser_problem_set_routerType, routerTypeWithUsername, routerTypeWithData, \
     ser_problem_set_with_data, submissionListType, ser_submission_List, \
     ser_submission_info, submissionInfo, routerTypeBase, pbcp_deal, \
-    ser_psid_only
+    ser_psid_only, ser_subjective_export
 from utils import makeResponse, get_random_list_by_str, get_group_hash_name, \
     deal_order_change
 
@@ -143,3 +148,33 @@ async def acceptance_queue_list(data=Depends(ser_psid_only)):
     db = answerSheetModel()
     res = await db.get_acceptance_queue_list(data["psid"])  # {'problems': [...], 'queueSet': [...]}
     return makeResponse(res.get("queueSet", []))
+
+
+@router.post("/subjective/exportZip")
+async def subjective_export_zip(data: routerType = Depends(ser_subjective_export)):
+    db = answerSheetModel()
+    filename, content = await db.export_subjective_zip(
+        data.router.psid, data.router.gid, data.router.pid
+    )
+    encoded = quote(filename)
+
+    def latin1_safe(name: str) -> str:
+        try:
+            name.encode("latin-1")
+            return name
+        except UnicodeEncodeError:
+            safe = re.sub(r"[^\x20-\x7E]", "_", name)
+            if not safe:
+                safe = "download.zip"
+            try:
+                safe.encode("latin-1")
+                return safe
+            except UnicodeEncodeError:
+                return "download.zip"
+
+    fallback = latin1_safe(filename)
+    headers = {
+        "Content-Disposition": f'attachment; filename="{fallback}"; filename*=UTF-8''{encoded}',
+        "Content-Length": str(len(content))
+    }
+    return StreamingResponse(BytesIO(content), media_type="application/zip", headers=headers)

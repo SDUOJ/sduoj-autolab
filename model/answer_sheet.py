@@ -1,6 +1,8 @@
 import copy
 import json
 import math
+import re
+from pathlib import Path
 
 from fastapi import HTTPException
 from fastapi_cache.decorator import cache
@@ -13,7 +15,7 @@ from db import ProblemSetAnswerSheet, \
 from model.problem_group import groupModel
 from model.problem_set import problemSetModel
 from sduojApi import getProblemInfo, programSubmit, getSubmissionScoreAll, \
-    getNickName, getSubmissionScore, getUserId
+    getNickName, getSubmissionScore, getUserId, downloadFilesZip
 from ser.answer_sheet import routerTypeWithUsername, \
     routerTypeWithData, routerTypeBase, routerTypeBaseWithUsername
 from utils import get_random_list_by_str, change_order, get_group_hash_name, \
@@ -400,6 +402,10 @@ class answerSheetModel(problemSetModel, groupModel):
                             ProblemSubjective.pid == pid
                         ).first()
                         problemInfo[j]["config"] = json.loads(pro.config)
+                elif group["type"] == 1:
+                    pid = problemInfo[j]["pid"]
+                    subj_basic = await self.get_subjective_basic_cache(pid)
+                    problemInfo[j]["type"] = subj_basic["type"]
 
                 problemInfo[j]["index"] = j
                 problemInfo[j]["point"] = problemInfo[j]["score"] / ps * \
@@ -1241,3 +1247,129 @@ class answerSheetModel(problemSetModel, groupModel):
                         "review_queue": rq
                     })
         return {"problems": problems, "queueSet": sorted(list(queue_set))}
+
+    def _sanitize_filename(self, name: str, placeholder: str = "file") -> str:
+        if not name:
+            name = placeholder
+        # Replace invalid filesystem characters with underscore
+        safe = re.sub(r"[\\/:*?\"<>|]", "_", name)
+        # Collapse whitespace
+        safe = re.sub(r"\s+", " ", safe).strip()
+        if not safe:
+            safe = placeholder
+        return safe
+
+    async def _iter_subjective_files(self, psid, gid, pid):
+        query = self.session.query(
+            ProblemSetAnswerSheetDetail, ProblemSetAnswerSheet.username
+        ).outerjoin(
+            ProblemSetAnswerSheet,
+            ProblemSetAnswerSheetDetail.asid == ProblemSetAnswerSheet.asid
+        ).filter(
+            ProblemSetAnswerSheetDetail.gid == gid,
+            ProblemSetAnswerSheetDetail.pid == pid,
+            ProblemSetAnswerSheet.psid == psid,
+            ProblemSetAnswerSheetDetail.answer != None
+        )
+
+        subj_basic = await self.get_subjective_basic_cache(pid)
+        if subj_basic["type"] != 0:
+            raise HTTPException(status_code=400, detail="Problem is not file type subjective question")
+
+        records = query.all()
+        res = []
+        for detail, username in records:
+            try:
+                nickname = await getNickName(username)
+            except Exception:
+                nickname = ""
+            try:
+                answer = json.loads(detail.answer)
+            except Exception:
+                answer = detail.answer
+
+            if not isinstance(answer, list):
+                continue
+            files = []
+            for item in answer:
+                file_id = None
+                file_name = None
+                if isinstance(item, dict):
+                    file_id = item.get("fileId") or item.get("fileid")
+                    file_name = item.get("fileName") or item.get("filename")
+                else:
+                    file_id = getattr(item, "fileId", None)
+                    file_name = getattr(item, "fileName", None)
+                if not file_id:
+                    continue
+                files.append({
+                    "fileId": file_id,
+                    "fileName": self._sanitize_filename(file_name, file_id)
+                })
+            if files:
+                res.append({
+                    "username": username,
+                    "nickname": nickname,
+                    "files": files
+                })
+        return res
+
+    async def export_subjective_zip(self, psid, gi, pi):
+        gid, pid = await self.get_gid_pid_by_psid_gi_pi_cache(psid, gi, pi)
+        subj_basic = await self.get_subjective_basic_cache(pid)
+        if subj_basic["type"] != 0:
+            raise HTTPException(status_code=400, detail="Problem is not file type subjective question")
+
+        ps_info = await self.ps_get_info_by_id_cache(psid)
+        group_info = await self.group_get_info_by_id_cache(gid)
+        try:
+            problem_title = group_info["problemInfo"][pi]["name"]
+        except Exception:
+            problem_title = "problem"
+        zip_name = self._sanitize_filename(f"{ps_info['name']}-{problem_title}", "export")
+
+        students = await self._iter_subjective_files(psid, gid, pid)
+        if not students:
+            raise HTTPException(status_code=404, detail="No submissions found")
+
+        download_entries = []
+        existing_names = set()
+
+        for student in students:
+            student_base = student["username"]
+            if student["nickname"]:
+                student_base += f"-{student['nickname']}"
+            student_base = self._sanitize_filename(student_base, student["username"])
+
+            for file_meta in student["files"]:
+                original_name = file_meta.get("fileName") or file_meta["fileId"]
+                original_name = self._sanitize_filename(original_name, file_meta["fileId"])
+                suffix = Path(original_name).suffix
+
+                candidate = student_base + suffix
+                idx = 1
+                while candidate in existing_names:
+                    candidate = f"{student_base}({idx}){suffix}"
+                    idx += 1
+                existing_names.add(candidate)
+
+                try:
+                    file_id = int(file_meta["fileId"])
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=400, detail=f"Invalid fileId: {file_meta['fileId']}")
+
+                download_entries.append({
+                    "id": file_id,
+                    "downloadFilename": candidate
+                })
+
+        try:
+            status, content, _ = await downloadFilesZip(download_entries)
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        if status != 200:
+            detail = content.decode("utf-8", errors="ignore") or "Failed to download zip"
+            raise HTTPException(status_code=502, detail=detail)
+
+        return zip_name + ".zip", content

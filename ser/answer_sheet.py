@@ -253,6 +253,12 @@ async def ser_submission_info(
     return data
 
 
+async def ser_subjective_export(
+        data: routerType, SDUOJUserInfo=Depends(cover_header)):
+    problem_set_manager(data.router.psid, SDUOJUserInfo)
+    return data
+
+
 def save_Ipv4_info(data: routerTypeWithUsername, ip):
     from model.answer_sheet import answerSheetModel
     db = answerSheetModel()
