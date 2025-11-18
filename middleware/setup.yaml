@@ -1,0 +1,38 @@
+services:
+  # 中间件
+  mysql:
+    container_name: "sduoj_ext_problem_set_mysql" # disable scalability
+    image: mysql:8
+    ports:
+      - "7360:3306"
+    env_file:
+      - ./.env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Shanghai
+    cap_add:
+      - SYS_NICE  # solve the 'mbind: Operation not permitted' error
+    volumes:
+      - ./mysql-conf.d:/etc/mysql/conf.d
+      - ./mysql-initdb.d:/docker-entrypoint-initdb.d
+      - ./data:/var/lib/mysql
+      - ./files:/var/lib/mysql-files
+    restart: always
+  redis:
+    container_name: "sduoj_ext_problem_set_redis"
+    image: redis:alpine
+    ports:
+      - "7361:6379"
+    env_file:
+      - ./.env
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./redis_data:/data
+      # - ./redis_config/redis.conf:/usr/local/etc/redis/redis.conf
+      - ./redis_logs:/logs
+    command: [ "redis-server","--requirepass","${REDIS_PASSWORD}" ]
+    restart: always
