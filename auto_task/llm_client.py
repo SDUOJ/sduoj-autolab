@@ -57,7 +57,7 @@ class AutoTaskLLMClient:
             self.config.base_url,
             json=payload,
             headers=headers,
-            timeout=600,
+            timeout=800,
         )
         resp.raise_for_status()
         data = resp.json()
