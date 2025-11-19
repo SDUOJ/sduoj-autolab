@@ -18,9 +18,9 @@ from const import (
     LLM_DEEPSEEK_API_KEY,
     LLM_DEEPSEEK_BASE_URL,
     LLM_DEEPSEEK_MODEL,
-    LLM_QWEN_API_KEY,
-    LLM_QWEN_BASE_URL,
-    LLM_QWEN_MODEL,
+    LLM_DOUBAO_API_KEY,
+    LLM_DOUBAO_BASE_URL,
+    LLM_DOUBAO_MODEL,
 )
 from sduojApi import downloadFile
 
@@ -57,7 +57,7 @@ class AutoTaskLLMClient:
             self.config.base_url,
             json=payload,
             headers=headers,
-            timeout=800,
+            timeout=None,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -72,18 +72,14 @@ class AutoTaskLLMClient:
         return await loop.run_in_executor(None, self.chat, messages, extra_params)
 
 
-QWEN_CONFIG = LLMConfig(
-    base_url=LLM_QWEN_BASE_URL,
-    api_key=LLM_QWEN_API_KEY,
-    model=LLM_QWEN_MODEL,
+DOUBAO_CONFIG = LLMConfig(
+    base_url=LLM_DOUBAO_BASE_URL,
+    api_key=LLM_DOUBAO_API_KEY,
+    model=LLM_DOUBAO_MODEL,
     is_multimodal=True,
     default_params={
-        "max_tokens": 16384,
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "top_k": 20,
-        "repetition_penalty": 1.0,
-        "presence_penalty": 0.0,
+        "max_completion_tokens": 16384,
+        "reasoning_effort": "medium",
     },
 )
 
@@ -102,7 +98,7 @@ async def call_structured_llm(
     """Call the appropriate LLM and enforce JSON-structured output."""
 
     has_images = bool(image_file_ids)
-    config = QWEN_CONFIG if has_images else DEEPSEEK_CONFIG
+    config = DOUBAO_CONFIG if has_images else DEEPSEEK_CONFIG
     image_contents: List[Dict[str, Any]] = []
     if has_images:
         if not config.is_multimodal:
