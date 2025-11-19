@@ -1,5 +1,6 @@
 import copy
 import json
+import uuid
 
 from sqlalchemy import Column, ForeignKey, Index, UniqueConstraint
 from sqlalchemy import create_engine
@@ -507,6 +508,59 @@ class ojSignUser(Base):
     # 让sg_id  username  seat_id 联合唯一
     _table_aegs_ = (
         UniqueConstraint("sg_id", "username", "seat_id", name="u_id_seat"),
+    )
+
+
+class AutoTaskRun(Base):
+    """自动化任务运行表：记录队列型任务的执行情况"""
+
+    __tablename__ = "auto_task_run"
+
+    id = Column(VARCHAR(63), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # 任务类型（例如 subjective_review, code_similarity 等）
+    task_type = Column(VARCHAR(63), nullable=False)
+
+    # 便于筛选某个题单的任务
+    psid = Column(INTEGER, nullable=True, index=True)
+
+    # 关联的学生
+    username = Column(VARCHAR(63), nullable=True, index=True)
+
+    # pending / running / success / failed
+    status = Column(VARCHAR(31), nullable=False, default="pending")
+
+    # 任务运行时间
+    start_time = Column(DATETIME, nullable=True)
+    end_time = Column(DATETIME, nullable=True)
+
+    create_time = Column(DATETIME, nullable=False, server_default=func.now())
+    update_time = Column(
+        DATETIME, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_auto_task_run_task_type_status", "task_type", "status"),
+        Index("ix_auto_task_run_psid", "psid"),
+    )
+
+
+class AutoTaskRunLog(Base):
+    __tablename__ = "auto_task_run_log"
+
+    log_id = Column(BIGINT, primary_key=True, autoincrement=True)
+    task_id = Column(
+        VARCHAR(63), ForeignKey("auto_task_run.id"), nullable=False, index=True
+    )
+
+    # payload / result / error / warning / log 等类型的日志
+    tag = Column(VARCHAR(31), nullable=False)
+    content = Column(LONGTEXT, nullable=False)
+
+    create_time = Column(DATETIME, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_auto_task_run_log_task_id_ct", "task_id", "create_time"),
     )
 
 

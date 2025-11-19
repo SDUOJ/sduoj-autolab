@@ -1143,7 +1143,7 @@ class answerSheetModel(problemSetModel, groupModel):
         ).first()
         config = json.loads(pro.config)["judgeConfig"]
         asd["judgeConfig"] = config
-        if asd["judgeLock_username"] is None:
+        if asd["judgeLock_username"] in (None, "<AUTO>"):
             self.update_detail_by_asd_id(
                 asd["asd_id"], {"judgeLock_username": judger}
             )

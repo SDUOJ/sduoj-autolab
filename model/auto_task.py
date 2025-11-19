@@ -1,0 +1,349 @@
+import json
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Iterable, List, Optional
+
+import redis
+from fastapi import HTTPException
+from redis.exceptions import RedisError
+from sqlalchemy import asc, desc
+
+from auto_task.constants import TASK_QUEUE_NAME
+from const import Redis_addr, Redis_pass
+from db import AutoTaskRun, AutoTaskRunLog, dbSession
+from ser.base_type import page
+
+LOCAL_TZ = timezone(timedelta(hours=8))
+def _now_local():
+    return datetime.now(LOCAL_TZ).replace(tzinfo=None)
+
+
+class autoTaskModel(dbSession):
+    _redis_client: Optional[redis.Redis] = None
+
+    def __init__(self):
+        super().__init__()
+        if autoTaskModel._redis_client is None:
+            autoTaskModel._redis_client = redis.Redis.from_url(
+                f"redis://{Redis_addr}/0",
+                password=Redis_pass,
+                decode_responses=True,
+            )
+        self.redis = autoTaskModel._redis_client
+
+    # ------------------------ task creation ------------------------
+    def add_task(self, task_type: str, psid: Optional[int], payload: Any) -> str:
+        ids = self.add_tasks(task_type, psid, [payload])
+        return ids[0] if ids else ""
+
+    def add_tasks(self, task_type: str, psid: Optional[int], payload_list: List[Any]) -> List[str]:
+        if payload_list is None or len(payload_list) == 0:
+            return []
+
+        queue_payloads: List[Dict[str, Any]] = []
+        task_ids: List[str] = []
+
+        for payload in payload_list:
+            task_id = uuid.uuid4().hex
+            record = AutoTaskRun(
+                id=task_id,
+                task_type=task_type,
+                psid=self._resolve_psid(psid, payload),
+                username=self._extract_username(payload),
+                status="pending",
+            )
+            self.session.add(record)
+            self._append_log(task_id, "payload", payload)
+            queue_payloads.append({
+                "task_id": task_id,
+                "type": task_type,
+                "payload": payload,
+            })
+            task_ids.append(task_id)
+
+        self.session.commit()
+        self._push_tasks(queue_payloads)
+        return task_ids
+
+    # ------------------------ task updates ------------------------
+    def update_status(self, task_id: str, status: str) -> None:
+        record = self.session.query(AutoTaskRun).filter(
+            AutoTaskRun.id == task_id
+        ).first()
+        if record is None:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        record.status = status
+        self.session.commit()
+
+    def add_log(self, task_id: str, tag: str, content: Any) -> None:
+        allowed_tags = {"result", "error", "warning", "log"}
+        if tag not in allowed_tags:
+            raise HTTPException(status_code=400, detail="不支持的日志类型")
+        self._append_log(task_id, tag, content)
+        self.session.commit()
+
+    # ------------------------ worker helpers ------------------------
+    def prepare_task_run(
+            self, task_id: Optional[str], task_type: str,
+            payload: Any) -> str:
+        now = _now_local()
+        record = None
+        if task_id is not None:
+            record = self.session.query(AutoTaskRun).filter(
+                AutoTaskRun.id == task_id
+            ).first()
+        if record is None:
+            task_id = task_id or uuid.uuid4().hex
+            record = AutoTaskRun(
+                id=task_id,
+                task_type=task_type,
+                psid=self._resolve_psid(None, payload),
+                username=self._extract_username(payload),
+                status="running",
+                start_time=now,
+            )
+            self.session.add(record)
+            if payload is not None:
+                self._append_log(task_id, "payload", payload)
+        else:
+            record.task_type = task_type
+            if record.psid is None:
+                record.psid = self._resolve_psid(None, payload)
+            if record.username is None:
+                record.username = self._extract_username(payload)
+            record.status = "running"
+            if record.start_time is None:
+                record.start_time = now
+        self.session.commit()
+        return record.id
+
+    def finish_task_success(self, task_id: str, result: Any = None) -> None:
+        record = self._get_record(task_id)
+        record.status = "success"
+        record.end_time = _now_local()
+        if result is not None:
+            self._append_log(task_id, "result", result)
+        self.session.commit()
+
+    def finish_task_failure(self, task_id: str, error: Any) -> None:
+        record = self._get_record(task_id)
+        record.status = "failed"
+        record.end_time = _now_local()
+        self._append_log(task_id, "error", error)
+        self.session.commit()
+
+    def record_invalid_task(self, raw_task: str, error: str) -> None:
+        now = _now_local()
+        task_id = uuid.uuid4().hex
+        record = AutoTaskRun(
+            id=task_id,
+            task_type="invalid",
+            status="failed",
+            start_time=now,
+            end_time=now,
+        )
+        self.session.add(record)
+        self._append_log(task_id, "payload", raw_task)
+        self._append_log(task_id, "error", error)
+        self.session.commit()
+
+    # ------------------------ task queries ------------------------
+    def get_task_detail(self, task_id: str) -> Dict[str, Any]:
+        record = self.session.query(AutoTaskRun).filter(
+            AutoTaskRun.id == task_id
+        ).first()
+        if record is None:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        data = self.dealData(
+            record,
+            ["start_time", "end_time", "create_time", "update_time"],
+        )
+        logs = self.session.query(AutoTaskRunLog).filter(
+            AutoTaskRunLog.task_id == task_id
+        ).order_by(asc(AutoTaskRunLog.create_time)).all()
+        data["logs"] = self.dealDataList(
+            logs,
+            ["create_time"],
+        )
+        return data
+
+    def list_tasks_by_psid(
+            self, psid: int, pg: page, task_type: Optional[str] = None,
+            status: Optional[str] = None, username: Optional[str] = None) -> Dict[str, Any]:
+        if psid is None:
+            raise HTTPException(status_code=400, detail="psid 为必填项")
+        query = self.session.query(AutoTaskRun).filter(
+            AutoTaskRun.psid == psid
+        )
+        if task_type is not None:
+            query = query.filter(AutoTaskRun.task_type == task_type)
+        if status is not None:
+            query = query.filter(AutoTaskRun.status == status)
+        if username:
+            query = query.filter(AutoTaskRun.username == username)
+        query = query.order_by(desc(AutoTaskRun.create_time))
+        total = query.count()
+        rows = query.offset(pg.offset()).limit(pg.limit()).all()
+        self._mark_timeout_rows(rows)
+        data = self.dealDataList(
+            rows,
+            ["start_time", "end_time", "create_time", "update_time"],
+        )
+        return total, data
+
+    def rerun_task(self, task_id: str) -> str:
+        record = self.session.query(AutoTaskRun).filter(
+            AutoTaskRun.id == task_id
+        ).first()
+        if record is None:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        payload_data = self._get_payload_from_log(task_id)
+        if payload_data is None:
+            raise HTTPException(status_code=400, detail="任务缺少 payload 日志，无法重试")
+        (self.session.query(AutoTaskRunLog)
+         .filter(AutoTaskRunLog.task_id == task_id, AutoTaskRunLog.tag != "payload")
+         .delete())
+        record.status = "pending"
+        record.start_time = None
+        record.end_time = None
+        if record.psid is None:
+            record.psid = self._resolve_psid(record.psid, payload_data)
+        if record.username is None:
+            record.username = self._extract_username(payload_data)
+        self.session.commit()
+        self._push_tasks([
+            {
+                "task_id": task_id,
+                "type": record.task_type,
+                "payload": payload_data,
+            }
+        ])
+        return task_id
+
+    def delete_task(self, task_id: str) -> None:
+        self.session.query(AutoTaskRunLog).filter(
+            AutoTaskRunLog.task_id == task_id
+        ).delete()
+        deleted = self.session.query(AutoTaskRun).filter(
+            AutoTaskRun.id == task_id
+        ).delete()
+        if deleted == 0:
+            self.session.rollback()
+            raise HTTPException(status_code=404, detail="任务不存在")
+        self.session.commit()
+
+    def task_exists(self, task_id: str) -> bool:
+        return self.session.query(AutoTaskRun.id).filter(
+            AutoTaskRun.id == task_id
+        ).first() is not None
+
+    # ------------------------ internal helpers ------------------------
+    def _append_log(self, task_id: str, tag: str, content: Any) -> None:
+        if content is None:
+            content_str = ""
+        else:
+            content_str = self._stringify(content)
+        log = AutoTaskRunLog(
+            task_id=task_id,
+            tag=tag,
+            content=content_str,
+        )
+        self.session.add(log)
+
+    def _get_record(self, task_id: str) -> AutoTaskRun:
+        record = self.session.query(AutoTaskRun).filter(
+            AutoTaskRun.id == task_id
+        ).first()
+        if record is None:
+            record = AutoTaskRun(
+                id=task_id,
+                task_type="unknown",
+                status="pending",
+            )
+            self.session.add(record)
+        return record
+
+    def _push_tasks(self, tasks: Iterable[Dict[str, Any]]) -> None:
+        serialized = []
+        for payload in tasks:
+            try:
+                serialized.append(json.dumps(payload, ensure_ascii=False))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="任务参数无法序列化") from exc
+        if not serialized:
+            return
+        try:
+            self.redis.rpush(TASK_QUEUE_NAME, *serialized)
+        except RedisError as exc:
+            raise HTTPException(status_code=500, detail="推送任务到队列失败") from exc
+
+    @staticmethod
+    def _stringify(data: Any) -> str:
+        if isinstance(data, str):
+            return data
+        try:
+            return json.dumps(data, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(data)
+
+    @staticmethod
+    def _resolve_psid(psid: Optional[int], payload: Any = None) -> Optional[int]:
+        if psid is not None:
+            try:
+                return int(psid)
+            except (TypeError, ValueError):
+                return None
+        return autoTaskModel._extract_psid(payload)
+
+    @staticmethod
+    def _extract_psid(payload: Any) -> Optional[int]:
+        if not isinstance(payload, dict):
+            return None
+        value = payload.get("psid")
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _extract_username(payload: Any) -> Optional[str]:
+        if isinstance(payload, dict):
+            username = payload.get("username")
+            if username is not None:
+                return str(username)
+        return None
+
+    def _get_payload_from_log(self, task_id: str) -> Optional[Dict[str, Any]]:
+        payload_log = self.session.query(AutoTaskRunLog).filter(
+            AutoTaskRunLog.task_id == task_id,
+            AutoTaskRunLog.tag == "payload"
+        ).order_by(asc(AutoTaskRunLog.log_id)).first()
+        if payload_log is None or payload_log.content is None:
+            return None
+        try:
+            return json.loads(payload_log.content)
+        except (TypeError, ValueError):
+            return None
+
+    def _mark_timeout_rows(self, rows: List[AutoTaskRun]) -> None:
+        if not rows:
+            return
+        now = _now_local()
+        timeout_delta = timedelta(minutes=30)
+        updated = False
+        for row in rows:
+            if row.status in ("pending", "running"):
+                base_time = row.start_time or row.create_time
+                if base_time and now - base_time > timeout_delta:
+                    row.status = "failed"
+                    row.end_time = now
+                    self._append_log(
+                        row.id, "warning", "任务超过30分钟未完成，已自动失败"
+                    )
+                    updated = True
+        if updated:
+            self.session.commit()

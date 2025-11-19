@@ -1,0 +1,260 @@
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from auth import cover_header, problem_set_manager
+from utils import makeResponse
+from ser.base_type import page
+from model.answer_sheet import answerSheetModel
+from db import (
+    ProblemSubjective,
+    ProblemSetAnswerSheet,
+    ProblemSetAnswerSheetDetail,
+)
+
+router = APIRouter(prefix="/auto-task", tags=["auto-task"])
+
+
+class ProgrammingProblemRef(BaseModel):
+    gid: int
+    pid: int
+
+
+class SubjectiveTaskItem(BaseModel):
+    psid: int
+    gid: int
+    pid: int
+    username: str
+    programmingProblems: List[ProgrammingProblemRef] = []
+
+
+class SubjectiveTaskRequest(BaseModel):
+    tasks: List[SubjectiveTaskItem]
+
+
+@router.post("/subjective/review")
+async def create_subjective_review_tasks(
+        data: SubjectiveTaskRequest,
+        user=Depends(cover_header)):
+    if not data.tasks:
+        raise HTTPException(status_code=400, detail="tasks 不能为空")
+    for task in data.tasks:
+        problem_set_manager(task.psid, user)
+    grouped = defaultdict(list)
+    for task in data.tasks:
+        grouped[task.psid].append(task)
+    from model.auto_task import autoTaskModel
+    model = autoTaskModel()
+    task_ids: List[str] = []
+    try:
+        for psid, tasks in grouped.items():
+            payloads = [
+                {
+                    "psid": item.psid,
+                    "gid": item.gid,
+                    "pid": item.pid,
+                    "username": item.username,
+                    "programmingProblems": [pp.dict() for pp in item.programmingProblems],
+                }
+                for item in tasks
+            ]
+            task_ids.extend(model.add_tasks("subjective_review", psid, payloads))
+    finally:
+        model.session.close()
+    return makeResponse({"taskIds": task_ids})
+
+
+class AutoTaskListRequest(BaseModel):
+    psid: int
+    pageNow: int = 1
+    pageSize: int = 20
+    status: Optional[str] = None
+    taskType: Optional[str] = None
+    username: Optional[str] = None
+
+
+@router.post("/list")
+async def list_ps_auto_tasks(
+        data: AutoTaskListRequest,
+        user=Depends(cover_header)):
+    problem_set_manager(data.psid, user)
+    from model.auto_task import autoTaskModel
+    model = autoTaskModel()
+    try:
+        pg = page(pageNow=data.pageNow, pageSize=data.pageSize)
+        total, rows = model.list_tasks_by_psid(
+            data.psid, pg, data.taskType, data.status, data.username
+        )
+    finally:
+        model.session.close()
+    return makeResponse({
+        "pageIndex": data.pageNow,
+        "pageSize": data.pageSize,
+        "total": total,
+        "rows": rows,
+    })
+
+
+@router.get("/detail/{task_id}")
+async def get_task_detail(task_id: str, user=Depends(cover_header)):
+    from model.auto_task import autoTaskModel
+    model = autoTaskModel()
+    try:
+        detail = model.get_task_detail(task_id)
+    finally:
+        model.session.close()
+    psid = detail.get("psid")
+    if psid is not None:
+        problem_set_manager(psid, user)
+    logs = detail.pop("logs", [])
+    detail["logs"] = logs
+    return makeResponse(detail)
+
+
+@router.get("/subjective/options/{psid}")
+async def get_subjective_options(psid: int, user=Depends(cover_header)):
+    problem_set_manager(psid, user)
+    model = answerSheetModel()
+    try:
+        ps_info = await model.ps_get_info_by_id_cache(psid)
+        subj_pairs: List[Tuple[int, int]] = []
+        program_list: List[dict] = []
+        for group in ps_info["groupInfo"]:
+            gid = group["gid"]
+            group_detail = await model.group_get_info_by_id_cache(gid)
+            gtype = group_detail.get("type")
+            for problem in group_detail.get("problemInfo", []):
+                pid = problem.get("pid")
+                if pid is None:
+                    continue
+                if gtype == 1:
+                    subj_pairs.append((gid, pid))
+                elif gtype == 2:
+                    program_list.append({
+                        "gid": gid,
+                        "pid": pid,
+                        "name": problem.get("name") or f"编程题 {pid}",
+                    })
+
+        subjectives = _build_subjective_summary(model, psid, subj_pairs)
+        students = _get_ps_students(model, psid)
+    finally:
+        model.session.close()
+    return makeResponse({
+        "subjectiveProblems": subjectives,
+        "programmingProblems": program_list,
+        "students": students,
+    })
+
+
+@router.post("/rerun/{task_id}")
+async def rerun_task(task_id: str, user=Depends(cover_header)):
+    from model.auto_task import autoTaskModel
+    model = autoTaskModel()
+    try:
+        detail = model.get_task_detail(task_id)
+        psid = detail.get("psid")
+        if psid is not None:
+            problem_set_manager(psid, user)
+        model.rerun_task(task_id)
+    finally:
+        model.session.close()
+    return makeResponse({"taskId": task_id, "status": "pending"})
+
+
+@router.post("/task/{task_id}/delete")
+async def delete_task(task_id: str, user=Depends(cover_header)):
+    from model.auto_task import autoTaskModel
+    model = autoTaskModel()
+    try:
+        detail = model.get_task_detail(task_id)
+        psid = detail.get("psid")
+        if psid is not None:
+            problem_set_manager(psid, user)
+        model.delete_task(task_id)
+    finally:
+        model.session.close()
+    return makeResponse({"taskId": task_id, "deleted": True})
+
+
+def _build_subjective_summary(
+        model: answerSheetModel,
+        psid: int,
+        subj_pairs: List[Tuple[int, int]]) -> List[dict]:
+    if not subj_pairs:
+        return []
+    pids = [pid for _, pid in subj_pairs]
+    records = model.session.query(ProblemSubjective).filter(
+        ProblemSubjective.pid.in_(pids)
+    ).all()
+    record_map = {rec.pid: rec for rec in records}
+
+    def preview(text: Optional[str]) -> str:
+        if not text:
+            return ""
+        text = text.replace("\r", " ").replace("\n", " ")
+        return text[:16]
+
+    allowed_pairs: List[Tuple[int, int]] = []
+    for gid, pid in subj_pairs:
+        rec = record_map.get(pid)
+        if rec is None:
+            continue
+        if rec.type not in (0, 1):
+            continue
+        allowed_pairs.append((gid, pid))
+    if not allowed_pairs:
+        return []
+
+    pending_students = _get_pending_review_students(model, psid, allowed_pairs)
+    result = []
+    for gid, pid in allowed_pairs:
+        rec = record_map[pid]
+        result.append({
+            "gid": gid,
+            "pid": pid,
+            "answerType": rec.type,
+            "preview": preview(rec.description),
+            "pendingStudents": pending_students.get((gid, pid), [])
+        })
+    return result
+
+
+def _get_pending_review_students(
+        model: answerSheetModel,
+        psid: int,
+        subj_pairs: List[Tuple[int, int]]) -> Dict[Tuple[int, int], List[str]]:
+    if not subj_pairs:
+        return {}
+    gid_set = sorted({gid for gid, _ in subj_pairs})
+    pid_set = sorted({pid for _, pid in subj_pairs})
+    pending = defaultdict(set)
+    rows = model.session.query(
+        ProblemSetAnswerSheetDetail.gid,
+        ProblemSetAnswerSheetDetail.pid,
+        ProblemSetAnswerSheet.username,
+    ).join(
+        ProblemSetAnswerSheet,
+        ProblemSetAnswerSheetDetail.asid == ProblemSetAnswerSheet.asid
+    ).filter(
+        ProblemSetAnswerSheet.psid == psid,
+        ProblemSetAnswerSheetDetail.gid.in_(gid_set),
+        ProblemSetAnswerSheetDetail.pid.in_(pid_set),
+        ProblemSetAnswerSheetDetail.tm_answer_submit != None,
+        ProblemSetAnswerSheetDetail.judgeLog == None,
+    ).all()
+    for row in rows:
+        key = (row.gid, row.pid)
+        if row.username:
+            pending[key].add(row.username)
+    return {key: sorted(list(usernames)) for key, usernames in pending.items()}
+
+
+def _get_ps_students(model: answerSheetModel, psid: int) -> List[str]:
+    rows = model.session.query(ProblemSetAnswerSheet.username).filter(
+        ProblemSetAnswerSheet.psid == psid
+    ).all()
+    usernames = sorted({row.username for row in rows if row.username})
+    return usernames

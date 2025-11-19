@@ -7,8 +7,9 @@ from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 
 from server import answer_sheet, objective, \
-    problem_set, problem_group, subjective, subjective_judge, summary, screen_record, sign_in_record, class_binding, test, problem_set_late
+    problem_set, problem_group, subjective, subjective_judge, summary, screen_record, sign_in_record, class_binding, test, problem_set_late, auto_task
 from utilsTime import getMsTime
+from auto_task import start_background_worker
 
 
 app = FastAPI()
@@ -24,6 +25,7 @@ app.include_router(screen_record.router)
 app.include_router(sign_in_record.router)
 app.include_router(class_binding.router)
 app.include_router(test.router)
+app.include_router(auto_task.router)
 
 # 已移除全局 CORS 中间件，避免自动添加 Access-Control-Allow-Origin 头。
 
@@ -80,3 +82,4 @@ async def request_validatoion_error(request, exc):
 async def startup():
     from utils import init_redis
     init_redis()
+    start_background_worker()

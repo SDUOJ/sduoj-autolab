@@ -233,6 +233,15 @@ async def downloadFile(fileId):
 
     loop = asyncio.get_running_loop()
     status, content, headers = await loop.run_in_executor(None, _request)
+    if status == 200:
+        return status, content, headers
+    fallback_url = f"https://oj.qd.sdu.edu.cn/api/filesys/download/{fileId}/{fileId}"
+
+    def _fallback():
+        resp = requests.get(fallback_url, stream=True)
+        return resp.status_code, resp.content, dict(resp.headers)
+
+    status, content, headers = await loop.run_in_executor(None, _fallback)
     return status, content, headers
 
 
@@ -255,6 +264,58 @@ async def downloadFilesZip(items):
     loop = asyncio.get_running_loop()
     status, content, headers = await loop.run_in_executor(None, _request)
     return status, content, headers
+
+
+async def uploadFiles(files: list, userId: int):
+    """
+    上传文件到文件系统服务
+    
+    Args:
+        files: 文件列表,每个元素是一个字典,包含:
+            - filename: 文件名
+            - content: 文件内容(bytes)
+            - content_type: 文件类型(可选,默认 application/octet-stream)
+        userId: 用户ID
+    
+    Returns:
+        list: FileDTO 列表,每个包含:
+            - id: 文件ID
+            - gmtCreate: 创建时间
+            - gmtModified: 修改时间
+            - size: 文件大小
+            - name: 文件名
+            - extensionName: 扩展名
+            - md5: MD5值
+    """
+    addr = await getService_ip_port("filesys-service")
+
+    def _request():
+        # 准备 multipart/form-data 格式的文件
+        files_data = []
+        for idx, file_info in enumerate(files):
+            filename = file_info.get("filename", f"file_{idx}")
+            content = file_info.get("content")
+            content_type = file_info.get("content_type", "application/octet-stream")
+            
+            files_data.append(
+                ("files", (filename, content, content_type))
+            )
+        
+        resp = requests.post(
+            "http://" + addr + "/internal/filesys/byteUploads",
+            files=files_data,
+            params={"userId": userId},
+            headers=requestHeaders
+        )
+        return resp.status_code, resp.json()
+
+    loop = asyncio.get_running_loop()
+    status, data = await loop.run_in_executor(None, _request)
+    
+    if status != 200:
+        raise RuntimeError(f"Upload failed with status {status}: {data}")
+    
+    return data
 
 
 @cache(expire=60)
