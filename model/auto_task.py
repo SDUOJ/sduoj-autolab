@@ -336,8 +336,8 @@ class autoTaskModel(dbSession):
         timeout_delta = timedelta(minutes=30)
         updated = False
         for row in rows:
-            if row.status in ("pending", "running"):
-                base_time = row.start_time or row.create_time
+            if row.status == "running":
+                base_time = row.start_time
                 if base_time and now - base_time > timeout_delta:
                     row.status = "failed"
                     row.end_time = now

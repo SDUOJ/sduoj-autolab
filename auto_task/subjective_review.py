@@ -45,6 +45,7 @@ def _init_redis_client() -> Optional[redis.Redis]:
 REDIS_CLIENT = _init_redis_client()
 CACHE_TTL_SECONDS = 3600
 _CACHE_INITIALIZED = False
+_WORKER_LOOP: Optional[asyncio.AbstractEventLoop] = None
 
 
 class ProgrammingProblemRef(BaseModel):
@@ -116,7 +117,7 @@ class _SubjectiveReviewService:
         self._answer_detail_obj = None
         self._answer_detail_dict = None
         self.task_id = task_id
-        self.loop = asyncio.new_event_loop()
+        self.loop = _get_worker_loop()
         asyncio.set_event_loop(self.loop)
 
     def execute(self) -> Dict[str, Any]:
@@ -129,10 +130,6 @@ class _SubjectiveReviewService:
                 pass
             try:
                 self.subject_model.session.close()
-            except Exception:
-                pass
-            try:
-                self.loop.close()
             except Exception:
                 pass
 
@@ -525,6 +522,13 @@ def _ensure_fastapi_cache(loop: asyncio.AbstractEventLoop) -> None:
 
     loop.run_until_complete(_init())
     _CACHE_INITIALIZED = True
+
+
+def _get_worker_loop() -> asyncio.AbstractEventLoop:
+    global _WORKER_LOOP
+    if _WORKER_LOOP is None:
+        _WORKER_LOOP = asyncio.new_event_loop()
+    return _WORKER_LOOP
 
 
 __all__ = ["SubjectiveReviewTask"]

@@ -6,10 +6,14 @@ import json
 import logging
 import os
 import time
+import traceback
 from multiprocessing import Process
 from typing import Any, Dict, Optional
 
+import aioredis
 import redis
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.redis import RedisBackend
 from redis.exceptions import RedisError
 
 from const import Redis_addr, Redis_pass
@@ -17,6 +21,7 @@ from model.auto_task import autoTaskModel
 from .base import TASK_REGISTRY, TaskDeletedError
 from .constants import TASK_QUEUE_NAME
 _worker_process: Optional[Process] = None
+_CACHE_INITIALIZED = False
 
 
 def start_background_worker() -> None:
@@ -33,6 +38,7 @@ def start_background_worker() -> None:
 
 def _run_worker_process() -> None:
     logging.basicConfig(level=logging.INFO)
+    _init_worker_cache()
     worker = AutoTaskWorker()
     worker.run_forever()
 
@@ -90,11 +96,12 @@ class AutoTaskWorker:
             model.finish_task_success(task_id, result)
         except TaskDeletedError:
             self.logger.info("Task %s deleted during execution, skipping", task_data.get("task_id"))
-        except Exception as exc:  # noqa: BLE001 - must log task failure
+        except Exception:  # noqa: BLE001 - must log task failure
+            error_trace = traceback.format_exc()
             if task_id is not None:
-                model.finish_task_failure(task_id, str(exc))
+                model.finish_task_failure(task_id, error_trace)
             else:
-                model.record_invalid_task(raw_task, str(exc))
+                model.record_invalid_task(raw_task, error_trace)
             self.logger.exception("Task %s failed", task_type)
         finally:
             model.session.close()
@@ -105,5 +112,20 @@ class AutoTaskWorker:
             model.record_invalid_task(raw_task, error)
         finally:
             model.session.close()
+
+
+def _init_worker_cache() -> None:
+    global _CACHE_INITIALIZED
+    if _CACHE_INITIALIZED:
+        return
+    redis_client = aioredis.from_url(
+        f"redis://{Redis_addr}/0",
+        password=Redis_pass,
+        encoding="utf8",
+        decode_responses=True,
+    )
+    FastAPICache.init(RedisBackend(redis_client), prefix="fastapi-cache-worker")
+    _CACHE_INITIALIZED = True
+
 
 __all__ = ["start_background_worker", "TASK_QUEUE_NAME"]
