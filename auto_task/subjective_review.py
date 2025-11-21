@@ -276,7 +276,7 @@ class _SubjectiveReviewService:
         if cached is not None:
             return cached
         converted = self._run_async(
-            convert_document_to_markdown(source, None, user_id)
+            convert_document_to_markdown(source, None, user_id, task_id=self.task_id)
         )
         _cache_set(key, converted)
         return converted
@@ -331,7 +331,7 @@ class _SubjectiveReviewService:
         if cached is not None:
             return cached
         converted = self._run_async(
-            convert_document_to_markdown(description, None, user_id)
+            convert_document_to_markdown(description, None, user_id, task_id=self.task_id)
         )
         _cache_set(key, converted)
         return converted
@@ -352,7 +352,7 @@ class _SubjectiveReviewService:
                 return ""
             content = "\n\n".join(parts)
             return self._run_async(
-                convert_document_to_markdown(content, None, user_id)
+                convert_document_to_markdown(content, None, user_id, task_id=self.task_id)
             )
         if subject_type == 0:
             fragments = []
@@ -367,7 +367,7 @@ class _SubjectiveReviewService:
                 if not file_id:
                     continue
                 markdown = self._run_async(
-                    convert_document_to_markdown(file_id, entry.get("fileName"), user_id)
+                    convert_document_to_markdown(file_id, entry.get("fileName"), user_id, task_id=self.task_id)
                 )
                 fragments.append(markdown)
             return "\n\n".join(fragments)

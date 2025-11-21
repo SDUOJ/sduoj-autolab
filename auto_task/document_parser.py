@@ -51,7 +51,8 @@ async def convert_document_to_markdown(
         data: Union[str, bytes],
         filename: Optional[str],
         user_id: int,
-        depth: int = 0) -> str:
+        depth: int = 0,
+        task_id: Optional[str] = None) -> str:
     """Convert Markdown/Docx/PDF/text into Markdown while preserving images."""
 
     if user_id is None:
@@ -77,8 +78,8 @@ async def convert_document_to_markdown(
             doc_links = []
         else:
             raise ValueError(f"不支持的文件类型: {ext}")
-    content = await _process_nested_documents(content, doc_links, user_id, depth)
-    return await _embed_images(content, images, user_id)
+    content = await _process_nested_documents(content, doc_links, user_id, depth, task_id)
+    return await _embed_images(content, images, user_id, task_id)
 
 
 async def _load_document_bytes(data: Union[str, bytes], filename: Optional[str]) -> Tuple[bytes, str]:
@@ -234,7 +235,7 @@ def _parse_pdf(file_bytes: bytes) -> Tuple[str, List[ImageResource]]:
     return "".join(text_parts).strip(), images
 
 
-async def _embed_images(base_text: str, images: Sequence[ImageResource], user_id: int) -> str:
+async def _embed_images(base_text: str, images: Sequence[ImageResource], user_id: int, task_id: Optional[str]) -> str:
     if not images:
         return base_text
 
@@ -262,7 +263,7 @@ async def _embed_images(base_text: str, images: Sequence[ImageResource], user_id
     
     print(f"找到{len(file_indices)}张图片需要描述，开始调用 LLM 进行描述...")
     descriptions = await asyncio.gather(
-        *[describe_image_to_text(images[idx].file_id) for idx in file_indices]
+        *[describe_image_to_text(images[idx].file_id, task_id=task_id) for idx in file_indices]
     )
 
     markdown = base_text
@@ -274,13 +275,18 @@ async def _embed_images(base_text: str, images: Sequence[ImageResource], user_id
     return markdown
 
 
-async def _process_nested_documents(content: str, doc_links: Sequence[str], user_id: int, depth: int) -> str:
+async def _process_nested_documents(
+        content: str,
+        doc_links: Sequence[str],
+        user_id: int,
+        depth: int,
+        task_id: Optional[str]) -> str:
     if not doc_links:
         return content
 
     tasks = []
     for link in doc_links:
-        tasks.append(convert_document_to_markdown(link, None, user_id, depth + 1))
+        tasks.append(convert_document_to_markdown(link, None, user_id, depth + 1, task_id))
     resolved = await asyncio.gather(*tasks, return_exceptions=True)
 
     for idx, result in enumerate(resolved):
@@ -349,7 +355,7 @@ async def _process_markdown_link(
         doc_links: List[str]) -> str:
     original = match.group(0)
     is_image = bool(match.group(1))
-    url = match.group(2).strip()
+    url = _normalize_oj_file_url(match.group(2).strip())
     allow_document = depth < 1 and len(doc_links) < MAX_RECURSIVE_DOCS
     try:
         resource_type, payload = await _load_external_resource(url, user_id, allow_document, is_image)
@@ -372,7 +378,7 @@ async def _process_html_image(
         depth: int,
         images: List[ImageResource],
         doc_links: List[str]) -> str:
-    url = match.group(1).strip()
+    url = _normalize_oj_file_url(match.group(1).strip())
     allow_document = depth < 1 and len(doc_links) < MAX_RECURSIVE_DOCS
     try:
         resource_type, payload = await _load_external_resource(url, user_id, allow_document, True)
@@ -479,8 +485,7 @@ async def _fetch_url(url: str) -> requests.Response:
 
 
 def _extract_file_reference(url: str) -> Tuple[Optional[str], Optional[str]]:
-    if url.startswith("oj-file://"):
-        return url.split("oj-file://", 1)[-1], None
+    url = _normalize_oj_file_url(url)
     parsed = urlparse(url)
     path = parsed.path or url
     match = FILESYS_DOWNLOAD_RE.search(path)
@@ -491,6 +496,13 @@ def _extract_file_reference(url: str) -> Tuple[Optional[str], Optional[str]]:
         if key in query and query[key]:
             return query[key][0], None
     return None, None
+
+
+def _normalize_oj_file_url(url: str) -> str:
+    if url.startswith("oj-file://"):
+        file_id = url.split("oj-file://", 1)[-1]
+        return f"https://oj.qd.sdu.edu.cn/api/filesys/download/{file_id}/{file_id}"
+    return url
 
 
 def _extract_filename_from_headers(headers: dict) -> str:

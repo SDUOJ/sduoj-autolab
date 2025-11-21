@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
-import json
 import re
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Type, TypeVar
 
@@ -32,11 +32,14 @@ from const import (
     LLM_QWEN_API_KEY,
     LLM_QWEN_BASE_URL,
     LLM_QWEN_MODEL,
+    LAYOUT_PARSING_API_URL,
 )
 from sduojApi import downloadFile
+from model.auto_task import autoTaskModel
 
 T = TypeVar("T", bound=BaseModel)
 SCHEMA_PATTERN = re.compile(r"<schema>((?:(?!<schema>).)*?)</schema>", re.DOTALL | re.IGNORECASE)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -242,10 +245,11 @@ class _ImageDescription(BaseModel):
     text: str
 
 
-async def describe_image_to_text(file_id: str) -> str:
+async def describe_image_to_text(file_id: str, task_id: Optional[str] = None) -> str:
     """Convert a single image (file_id) to a textual description."""
 
-    prompt = (
+    ocr_reference = await _prepare_ocr_reference(file_id)
+    prompt_parts = [
         "### 角色定义\n"
         "你是一个数据结构与算法课程的专业助教，同时具备高精度的OCR能力。你的任务是将学生手写的答题图片（可能包含代码、数学推导、复杂数据结构示意图）转换为机器可读的结构化文本，供自动评分系统使用。\n\n"
         
@@ -279,15 +283,134 @@ async def describe_image_to_text(file_id: str) -> str:
         "图片中可能包含表示算法状态的视觉记号，请按以下格式提取：\n"
         "- **颜色/阴影**：若某部分被涂色或高亮（不包括代码高亮），描述其语义。例如 `节点 C (状态: 红色/涂黑)` 或 `数组索引 0-3 (状态: 灰色阴影/已排序区域)`。\n"
         "- **形状标记**：例如 `节点 D 被双圈包裹 (可能表示终态)` 或 `元素 5 被划掉 (Strikethrough)`。\n"
-        "- **辅助符号**：如有对勾、叉号、问号，请明确其位置和关联对象。\n\n"
-    )
+        "- **辅助符号**：如有对勾、叉号、问号，请明确其位置和关联对象。\n"
+    ]
+
+    if ocr_reference:
+        prompt_parts.append(
+            "### OCR 辅助（PaddleOCR 版面 + 文本，供校正参考）\n"
+            "下面是通过 PaddleOCR 版面模型得到的文字与结构检测结果。若与图片内容冲突，请以图片为准：\n"
+            f"{ocr_reference}"
+        )
+
+    prompt = "\n\n".join(prompt_parts) + "\n\n"
 
     result = await call_structured_llm(
         messages=[{"role": "user", "content": prompt}],
         schema_model=_ImageDescription,
         image_file_ids=[file_id],
     )
-    return result.text
+    text = result.text
+    _append_image_log_if_needed(task_id, file_id, text)
+    return text
+
+
+async def _prepare_ocr_reference(file_id: str) -> Optional[str]:
+    if not LAYOUT_PARSING_API_URL:
+        return None
+    try:
+        status, content, _ = await downloadFile(file_id)
+    except Exception as exc:
+        logger.warning("下载图片失败，跳过 PaddleOCR（file_id=%s）：%s", file_id, exc)
+        return None
+    if status != 200 or not content:
+        logger.warning("下载图片失败，状态码 %s（file_id=%s）", status, file_id)
+        return None
+    try:
+        # 复用送入大模型的同一套处理（压缩/纠偏后转成 PNG）
+        processed_png = _coerce_image_to_png(content)
+    except Exception as exc:
+        logger.warning("图片预处理失败，跳过 PaddleOCR（file_id=%s）：%s", file_id, exc)
+        return None
+    layout_data = await _call_layout_parsing_api(processed_png)
+    if not layout_data:
+        return None
+    return _format_layout_reference(layout_data)
+
+
+async def _call_layout_parsing_api(image_bytes: bytes) -> Optional[Dict[str, Any]]:
+    if not LAYOUT_PARSING_API_URL:
+        return None
+    payload = {
+        "file": base64.b64encode(image_bytes).decode("ascii"),
+        "fileType": 1,
+    }
+    loop = asyncio.get_running_loop()
+
+    def _request():
+        return requests.post(
+            LAYOUT_PARSING_API_URL,
+            json=payload,
+            timeout=120,
+        )
+
+    try:
+        resp = await loop.run_in_executor(None, _request)
+    except Exception as exc:  # pragma: no cover - network failure
+        logger.warning("PaddleOCR 请求异常：%s", exc)
+        return None
+    if resp.status_code != 200:
+        text = ""
+        try:
+            text = resp.text[:500]
+        except Exception:
+            text = ""
+        logger.warning("PaddleOCR 返回非 200（%s）：%s", resp.status_code, text)
+        return None
+    try:
+        return resp.json()
+    except Exception as exc:
+        logger.warning("PaddleOCR JSON 解析失败：%s", exc)
+        return None
+
+
+def _format_layout_reference(layout_data: Dict[str, Any]) -> Optional[str]:
+    try:
+        results = layout_data.get("result", {}).get("layoutParsingResults") or []
+    except Exception:
+        return None
+    if not isinstance(results, list) or not results:
+        return None
+
+    markdown_blocks: List[str] = []
+
+    for entry in results[:3]:
+        markdown_text = ((entry.get("markdown") or {}).get("text") or "").strip()
+        if markdown_text:
+            markdown_blocks.append(markdown_text)
+
+    parts: List[str] = []
+    if markdown_blocks:
+        combined_md = "\n".join(markdown_blocks)
+        parts.append(_truncate_text(combined_md, 1200))
+    summary = "\n\n".join(parts).strip()
+    return summary or None
+def _truncate_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"...(截断{len(text) - limit}字)"
+
+
+def _build_file_download_url(file_id: str) -> str:
+    """Return a direct HTTP download URL for the given file id."""
+    return f"https://oj.qd.sdu.edu.cn/api/filesys/download/{file_id}/{file_id}"
+
+
+def _append_image_log_if_needed(task_id: Optional[str], file_id: str, text: str) -> None:
+    if not task_id:
+        return
+    link = _build_file_download_url(file_id)
+    markdown = f"![参考图片]({link})\n\n**OCR 转写结果：**\n\n{text}"
+    model = autoTaskModel()
+    try:
+        model.add_log(task_id, "log", markdown)
+    except Exception as exc:
+        logger.warning("记录图片转写日志失败 task_id=%s file_id=%s: %s", task_id, file_id, exc)
+    finally:
+        try:
+            model.session.close()
+        except Exception:
+            pass
 
 
 async def _load_image_contents(file_ids: Sequence[str]) -> List[Dict[str, Any]]:
