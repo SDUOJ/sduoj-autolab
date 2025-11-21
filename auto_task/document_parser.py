@@ -100,15 +100,31 @@ async def _parse_markdown(text: str, user_id: int, depth: int) -> Tuple[str, Lis
     rebuilt: List[str] = []
     last = 0
 
-    for match in MD_LINK_PATTERN.finditer(text):
+    matches: List[Tuple[str, re.Match]] = []
+    matches.extend([("md", match) for match in MD_LINK_PATTERN.finditer(text)])
+    matches.extend([("html_img", match) for match in HTML_IMG_PATTERN.finditer(text)])
+    matches.sort(key=lambda item: item[1].start())
+
+    for kind, match in matches:
+        if match.start() < last:
+            continue
         rebuilt.append(text[last:match.start()])
-        replacement = await _process_markdown_link(
-            match,
-            user_id,
-            depth,
-            images,
-            doc_links,
-        )
+        if kind == "md":
+            replacement = await _process_markdown_link(
+                match,
+                user_id,
+                depth,
+                images,
+                doc_links,
+            )
+        else:
+            replacement = await _process_html_image(
+                match,
+                user_id,
+                depth,
+                images,
+                doc_links,
+            )
         rebuilt.append(replacement)
         last = match.end()
     rebuilt.append(text[last:])
@@ -348,6 +364,29 @@ async def _process_markdown_link(
         doc_links.append(payload)
         return f"[[DOC:{len(doc_links) - 1}]]"
     return original
+
+
+async def _process_html_image(
+        match: re.Match,
+        user_id: int,
+        depth: int,
+        images: List[ImageResource],
+        doc_links: List[str]) -> str:
+    url = match.group(1).strip()
+    allow_document = depth < 1 and len(doc_links) < MAX_RECURSIVE_DOCS
+    try:
+        resource_type, payload = await _load_external_resource(url, user_id, allow_document, True)
+    except Exception:
+        return match.group(0)
+
+    if resource_type == "image":
+        idx = len(images)
+        images.append(payload)
+        return IMAGE_PLACEHOLDER.format(idx)
+    if resource_type == "document" and allow_document:
+        doc_links.append(payload)
+        return f"[[DOC:{len(doc_links) - 1}]]"
+    return match.group(0)
 
 
 async def _load_external_resource(
