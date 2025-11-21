@@ -18,6 +18,9 @@ from const import (
     LLM_DEEPSEEK_API_KEY,
     LLM_DEEPSEEK_BASE_URL,
     LLM_DEEPSEEK_MODEL,
+    LLM_DEEPSEEK_FALLBACK_API_KEY,
+    LLM_DEEPSEEK_FALLBACK_BASE_URL,
+    LLM_DEEPSEEK_FALLBACK_MODEL,
     LLM_DOUBAO_API_KEY,
     LLM_DOUBAO_BASE_URL,
     LLM_DOUBAO_MODEL,
@@ -115,6 +118,12 @@ DEEPSEEK_CONFIG = LLMConfig(
     model=LLM_DEEPSEEK_MODEL,
 )
 
+DEEPSEEK_FALLBACK_CONFIG = LLMConfig(
+    base_url=LLM_DEEPSEEK_FALLBACK_BASE_URL,
+    api_key=LLM_DEEPSEEK_FALLBACK_API_KEY,
+    model=LLM_DEEPSEEK_FALLBACK_MODEL,
+)
+
 
 async def call_structured_llm(
         messages: Sequence[Dict[str, str]],
@@ -131,7 +140,9 @@ async def call_structured_llm(
             raise ValueError("未找到可用的多模态 LLM 配置")
         image_contents = await _load_image_contents(image_file_ids or [])
     else:
-        configs = [DEEPSEEK_CONFIG]
+        configs = [cfg for cfg in (DEEPSEEK_CONFIG, DEEPSEEK_FALLBACK_CONFIG) if _is_config_ready(cfg)]
+        if not configs:
+            raise ValueError("未找到可用的文本 LLM 配置")
         image_contents = []
 
     base_messages = _build_conversation(messages, schema_model)
