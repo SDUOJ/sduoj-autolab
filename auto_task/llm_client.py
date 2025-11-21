@@ -10,9 +10,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Type, TypeVar
 
+import cv2
+import imutils
+import numpy as np
 import requests
+import pytesseract
 from pydantic import BaseModel, ValidationError
 from PIL import Image
+from pytesseract import Output
 
 from const import (
     LLM_DEEPSEEK_API_KEY,
@@ -306,26 +311,19 @@ async def _load_image_contents(file_ids: Sequence[str]) -> List[Dict[str, Any]]:
     return image_contents
 
 
-def _coerce_image_to_png(content: bytes) -> bytes:
-    try:
-        image = Image.open(io.BytesIO(content))
-    except Exception as exc:  # pragma: no cover - defensive
-        raise RuntimeError("无法解析图片内容") from exc
-    if image.mode not in ("RGB", "RGBA"):
-        image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
-    max_bytes = 1_048_576  # 1 MB upper limit
+def _encode_png(image: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    image.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
 
-    def _encode_png(img: Image.Image) -> bytes:
-        buf = io.BytesIO()
-        img.save(buf, format="PNG", optimize=True)
-        return buf.getvalue()
 
+def _compress_image_to_png(image: Image.Image, max_bytes: int) -> tuple[Image.Image, bytes]:
     png_bytes = _encode_png(image)
     if len(png_bytes) <= max_bytes:
-        return png_bytes
+        return image, png_bytes
 
     width, height = image.size
-    # Progressively downscale until the payload fits under 1 MB
+    # Progressively downscale until the payload fits under max_bytes
     while len(png_bytes) > max_bytes and min(width, height) > 64:
         width = max(64, int(width * 0.8))
         height = max(64, int(height * 0.8))
@@ -337,6 +335,46 @@ def _coerce_image_to_png(content: bytes) -> bytes:
         image = image.convert("RGB")
         png_bytes = _encode_png(image)
 
+    return image, png_bytes
+
+
+def _fix_orientation_if_needed(image: Image.Image, conf_thresh: float = 2.0) -> Image.Image:
+    try:
+        rgb_image = image.convert("RGB")
+        bgr = cv2.cvtColor(np.array(rgb_image), cv2.COLOR_RGB2BGR)
+        osd = pytesseract.image_to_osd(bgr, config="--psm 0", output_type=Output.DICT)
+        rotate = int(osd.get("rotate", 0) or 0)
+        conf = float(osd.get("orientation_conf", 0.0) or 0.0)
+        if rotate not in (90, 180, 270) or conf < conf_thresh:
+            return image
+
+        # Rotate the full image (preserve alpha channel when present)
+        if image.mode == "RGBA":
+            cv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGBA2BGRA)
+            rotated = imutils.rotate_bound(cv_img, angle=rotate)
+            restored = cv2.cvtColor(rotated, cv2.COLOR_BGRA2RGBA)
+        else:
+            cv_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+            rotated = imutils.rotate_bound(cv_img, angle=rotate)
+            restored = cv2.cvtColor(rotated, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(restored)
+    except Exception:
+        return image
+
+
+def _coerce_image_to_png(content: bytes) -> bytes:
+    try:
+        image = Image.open(io.BytesIO(content))
+    except Exception as exc:  # pragma: no cover - defensive
+        raise RuntimeError("无法解析图片内容") from exc
+    if image.mode not in ("RGB", "RGBA"):
+        image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+    max_bytes = 1_048_576  # 1 MB upper limit
+    image, png_bytes = _compress_image_to_png(image, max_bytes)
+
+    oriented_image = _fix_orientation_if_needed(image)
+    if oriented_image is not image:
+        oriented_image, png_bytes = _compress_image_to_png(oriented_image, max_bytes)
     return png_bytes
 
 
