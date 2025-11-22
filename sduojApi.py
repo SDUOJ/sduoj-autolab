@@ -225,7 +225,7 @@ async def downloadFile(fileId):
     def _request():
         resp = requests.get(
             "http://" + addr + "/internal/filesys/download",
-            params={"fileId": fileId},
+            params={"id": fileId},
             headers=requestHeaders,
             stream=True
         )
