@@ -30,8 +30,13 @@ from sduojApi import downloadFile, uploadFiles
 
 IMAGE_PLACEHOLDER = "[[IMAGE:{}]]"
 MD_LINK_PATTERN = re.compile(r"(!)?\[[^\]]*]\(([^)]+)\)")
+# 匹配中文括号的 markdown 图片语法（非规范写法）
+MD_LINK_CN_PATTERN = re.compile(r"(!)?\[[^\]]*]（([^）]+)）")
 HTML_IMG_PATTERN = re.compile(r'<img\s+[^>]*src="([^"]+)"[^>]*>', re.IGNORECASE)
 FILESYS_DOWNLOAD_RE = re.compile(r"/api/filesys/download/(\d+)/([^/?]+)")
+# 直接匹配裸露的文件系统下载链接
+BARE_FILESYS_URL_PATTERN = re.compile(r'https?://[^/\s]+/api/filesys/download/\d+/[^\s)）]+')
+
 
 
 MAX_FILE_SIZE = 16 * 1024 * 1024
@@ -103,7 +108,9 @@ async def _parse_markdown(text: str, user_id: int, depth: int) -> Tuple[str, Lis
 
     matches: List[Tuple[str, re.Match]] = []
     matches.extend([("md", match) for match in MD_LINK_PATTERN.finditer(text)])
+    matches.extend([("md_cn", match) for match in MD_LINK_CN_PATTERN.finditer(text)])
     matches.extend([("html_img", match) for match in HTML_IMG_PATTERN.finditer(text)])
+    matches.extend([("bare_url", match) for match in BARE_FILESYS_URL_PATTERN.finditer(text)])
     matches.sort(key=lambda item: item[1].start())
 
     for kind, match in matches:
@@ -118,8 +125,24 @@ async def _parse_markdown(text: str, user_id: int, depth: int) -> Tuple[str, Lis
                 images,
                 doc_links,
             )
-        else:
+        elif kind == "md_cn":
+            replacement = await _process_markdown_link_cn(
+                match,
+                user_id,
+                depth,
+                images,
+                doc_links,
+            )
+        elif kind == "html_img":
             replacement = await _process_html_image(
+                match,
+                user_id,
+                depth,
+                images,
+                doc_links,
+            )
+        else:  # bare_url
+            replacement = await _process_bare_url(
                 match,
                 user_id,
                 depth,
@@ -393,6 +416,58 @@ async def _process_html_image(
         doc_links.append(payload)
         return f"[[DOC:{len(doc_links) - 1}]]"
     return match.group(0)
+
+
+async def _process_markdown_link_cn(
+        match: re.Match,
+        user_id: int,
+        depth: int,
+        images: List[ImageResource],
+        doc_links: List[str]) -> str:
+    """处理中文括号的 markdown 链接（非规范写法）"""
+    original = match.group(0)
+    is_image = bool(match.group(1))
+    url = _normalize_oj_file_url(match.group(2).strip())
+    allow_document = depth < 1 and len(doc_links) < MAX_RECURSIVE_DOCS
+    try:
+        resource_type, payload = await _load_external_resource(url, user_id, allow_document, is_image)
+    except Exception:
+        return original
+
+    if resource_type == "image":
+        idx = len(images)
+        images.append(payload)
+        return IMAGE_PLACEHOLDER.format(idx)
+    if resource_type == "document" and allow_document:
+        doc_links.append(payload)
+        return f"[[DOC:{len(doc_links) - 1}]]"
+    return original
+
+
+async def _process_bare_url(
+        match: re.Match,
+        user_id: int,
+        depth: int,
+        images: List[ImageResource],
+        doc_links: List[str]) -> str:
+    """处理裸露的文件系统下载链接"""
+    url = _normalize_oj_file_url(match.group(0).strip())
+    allow_document = depth < 1 and len(doc_links) < MAX_RECURSIVE_DOCS
+    try:
+        # 由于是 /api/filesys/download/ 链接，通常是图片
+        resource_type, payload = await _load_external_resource(url, user_id, allow_document, True)
+    except Exception:
+        return match.group(0)
+
+    if resource_type == "image":
+        idx = len(images)
+        images.append(payload)
+        return IMAGE_PLACEHOLDER.format(idx)
+    if resource_type == "document" and allow_document:
+        doc_links.append(payload)
+        return f"[[DOC:{len(doc_links) - 1}]]"
+    return match.group(0)
+
 
 
 async def _load_external_resource(
