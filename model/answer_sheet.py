@@ -581,8 +581,8 @@ class answerSheetModel(problemSetModel, groupModel):
                             if ctx is not None:
                                 discount = ctx.get("discount", 1)
                                 return discount, True
-                        else:
-                            return x["weight"], False
+                        # 练习时间内，返回对应的权重
+                        return x["weight"], False
         else:
             g_timeSettingList = ps_info["groupInfo"][gi]["timeSetting"]
             for x in g_timeSettingList:
