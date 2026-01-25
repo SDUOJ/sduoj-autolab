@@ -7,7 +7,7 @@ from ser.answer_sheet import ser_problem_set_routerType, \
 from ser.base import makePageResult
 from ser.problem_set import ser_problem_set_add, ser_problem_set_edit, \
     ser_problem_set_info, ser_problem_set_list, ser_problem_set_search_list, \
-    ser_problem_set_key_list, ser_problem_set_info_c, \
+    ser_problem_set_key_list, ser_problem_set_list_by_group, ser_problem_set_info_c, \
     ser_problem_set_info_public, try_cover_header
 from utils import makeResponse, deal_order_change
 
@@ -69,6 +69,14 @@ async def search_list(data: dict = Depends(ser_problem_set_search_list)):
 async def search_list(data: int = Depends(ser_problem_set_key_list)):
     db = problemSetModel()
     res = await db.ps_get_key_list_cache(data)
+    return makeResponse(res)
+
+
+# 获取 group 下按标签组织的题单列表
+@router.post("/list_by_group")
+async def list_by_group(gid: int = Depends(ser_problem_set_list_by_group)):
+    db = problemSetModel()
+    res = db.ps_get_all_by_group_organized(gid)
     return makeResponse(res)
 
 

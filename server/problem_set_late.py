@@ -18,11 +18,12 @@ router = APIRouter(prefix="/problem_set/late")
 def list_permissions(data: dict = Depends(ser_late_permission_list)):
     db = latePermissionModel()
     pg = data["page"]
-    total, rows = db.list_by_psid(
-        data["psid"],
+    total, rows = db.list_all(
         pg.offset(),
         pg.limit(),
-        data.get("username")
+        psid=data.get("psid"),
+        groupId=data.get("groupId"),
+        username=data.get("username")
     )
     return makeResponse(makePageResult(pg, total, rows))
 

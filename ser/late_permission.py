@@ -3,7 +3,7 @@ from typing import List, Optional
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, validator
 
-from auth import cover_header, is_manager, problem_set_manager
+from auth import cover_header, is_manager, problem_set_manager, group_manager
 from model.problem_set import problemSetModel
 from ser.base import obj2dict
 from ser.base_type import page
@@ -84,7 +84,8 @@ class LatePermissionUpdate(BaseModel):
 
 
 class LatePermissionList(BaseModel):
-    psid: int
+    psid: Optional[int] = None
+    groupId: Optional[int] = None
     page: page
     username: Optional[str] = None
 
@@ -162,14 +163,18 @@ def _populate_base_payload(data: LatePermissionBase, SDUOJUserInfo: dict):
 
 def ser_late_permission_add(
         data: LatePermissionBase, SDUOJUserInfo=Depends(cover_header)):
-    problem_set_manager(data.psid, SDUOJUserInfo)
+    ps_db = problemSetModel()
+    ps_obj = ps_db.ps_get_obj_by_id(data.psid)
+    group_manager(ps_obj.groupId, SDUOJUserInfo)
     payload = _populate_base_payload(data, SDUOJUserInfo)
     return payload
 
 
 def ser_late_permission_update(
         data: LatePermissionUpdate, SDUOJUserInfo=Depends(cover_header)):
-    problem_set_manager(data.psid, SDUOJUserInfo)
+    ps_db = problemSetModel()
+    ps_obj = ps_db.ps_get_obj_by_id(data.psid)
+    group_manager(ps_obj.groupId, SDUOJUserInfo)
     item_id = data.id
     payload = obj2dict(data).copy()
     payload.pop("psid", None)
@@ -184,9 +189,20 @@ def ser_late_permission_update(
 
 def ser_late_permission_list(
         data: LatePermissionList, SDUOJUserInfo=Depends(cover_header)):
-    problem_set_manager(data.psid, SDUOJUserInfo)
+    if data.psid is not None:
+        ps_db = problemSetModel()
+        ps_obj = ps_db.ps_get_obj_by_id(data.psid)
+        group_manager(ps_obj.groupId, SDUOJUserInfo)
+    elif data.groupId is not None:
+        group_manager(data.groupId, SDUOJUserInfo)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Either psid or groupId must be provided"
+        )
     return {
         "psid": data.psid,
+        "groupId": data.groupId,
         "page": data.page,
         "username": data.username
     }
@@ -194,6 +210,7 @@ def ser_late_permission_list(
 
 def ser_late_permission_batch_add(
         data: LatePermissionBatchAdd, SDUOJUserInfo=Depends(cover_header)):
+    group_manager(data.groupId, SDUOJUserInfo)
     ps_db = problemSetModel()
     seen = set()
     psids = []
@@ -212,7 +229,6 @@ def ser_late_permission_batch_add(
                 status_code=400,
                 detail="Problem set group mismatch"
             )
-        is_manager(ps_obj, SDUOJUserInfo)
         payloads.append({
             "psid": psid,
             "groupId": ps_obj.groupId,

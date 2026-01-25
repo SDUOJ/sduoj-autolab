@@ -5,7 +5,7 @@ from fastapi import Depends, HTTPException
 from fastapi_cache.decorator import cache
 from pydantic import BaseModel, validator, root_validator
 
-from auth import cover_header, problem_set_manager, in_group, problem_set_user
+from auth import cover_header, problem_set_manager, in_group, problem_set_user, group_manager
 from fastapi import Header
 from ser.base import base_add, base_page, obj2dict
 from ser.base_type import page
@@ -263,6 +263,12 @@ def ser_problem_set_search_list(data: search_list_page,
 def ser_problem_set_key_list(data: userGroupId,
                              SDUOJUserInfo=Depends(cover_header)):
     in_group(data.groupId, SDUOJUserInfo)
+    return data.groupId
+
+
+def ser_problem_set_list_by_group(data: userGroupId,
+                                 SDUOJUserInfo=Depends(cover_header)):
+    group_manager(data.groupId, SDUOJUserInfo)
     return data.groupId
 
 

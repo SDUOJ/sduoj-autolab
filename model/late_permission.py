@@ -38,9 +38,15 @@ class latePermissionModel(dbSession):
         ).first()
 
     def list_by_psid(self, psid: int, offset: int, limit: int, username: str = None):
-        query = self.session.query(ProblemSetLatePermission).filter(
-            ProblemSetLatePermission.psid == psid
-        )
+        return self.list_all(offset, limit, psid=psid, username=username)
+
+    def list_all(self, offset: int, limit: int, psid: int = None, groupId: int = None, username: str = None):
+        query = self.session.query(ProblemSetLatePermission)
+        if psid is not None:
+            query = query.filter(ProblemSetLatePermission.psid == psid)
+        if groupId is not None:
+            query = query.filter(ProblemSetLatePermission.groupId == groupId)
+
         if username:
             query = query.filter(ProblemSetLatePermission.username == username)
 

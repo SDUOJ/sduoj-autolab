@@ -84,23 +84,24 @@ class problemSetModel(dbSession):
         data = self.session.query(ProblemSet).filter(
             ProblemSet.groupId.in_(groups)
         ).all()
-        res = self.dealDataList(
+        return self.dealDataList(
             data,
             ["create_time", "tm_start", "tm_end"],
-            []
-        )
-        # 反序列化 JSON 字段
-        for i in range(len(res)):
-            if isinstance(res[i].get("config"), str):
-                try:
-                    res[i]["config"] = json.loads(res[i]["config"])
-                except Exception:
-                    pass
-            if isinstance(res[i].get("groupInfo"), str):
-                try:
-                    res[i]["groupInfo"] = json.loads(res[i]["groupInfo"])
-                except Exception:
-                    pass
+            ["groupInfo", "config"])
+
+    def ps_get_all_by_group_organized(self, groupId: int):
+        data = self.session.query(ProblemSet).filter(
+            ProblemSet.groupId == groupId
+        ).all()
+        res = {}
+        for x in data:
+            tag = x.tag or "未分类"
+            if tag not in res:
+                res[tag] = []
+            res[tag].append({
+                "psid": x.psid,
+                "name": x.name
+            })
         return res
 
     @cache(expire=60, key_builder=class_func_key_builder)
