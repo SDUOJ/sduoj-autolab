@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from fastapi import HTTPException
 from sqlalchemy import and_
 
-from db import dbSession, ProblemSetLatePermission
+from db import dbSession, ProblemSetLatePermission, ProblemSet
 from utilsTime import getNowTime, getMsTime
 
 
@@ -41,7 +41,9 @@ class latePermissionModel(dbSession):
         return self.list_all(offset, limit, psid=psid, username=username)
 
     def list_all(self, offset: int, limit: int, psid: int = None, groupId: int = None, username: str = None):
-        query = self.session.query(ProblemSetLatePermission)
+        query = self.session.query(ProblemSetLatePermission, ProblemSet.name).join(
+            ProblemSet, ProblemSet.psid == ProblemSetLatePermission.psid
+        )
         if psid is not None:
             query = query.filter(ProblemSetLatePermission.psid == psid)
         if groupId is not None:
@@ -53,7 +55,7 @@ class latePermissionModel(dbSession):
         total = query.count()
         data = query.order_by(ProblemSetLatePermission.create_time.desc()) \
             .offset(max(0, offset)).limit(max(1, limit)).all()
-        return total, self._format_list(data)
+        return total, [self._format_obj(x, name) for x, name in data]
 
     def get_obj_by_id(self, pid: int):
         obj = self.session.query(ProblemSetLatePermission).filter(
@@ -66,12 +68,14 @@ class latePermissionModel(dbSession):
     def _format_list(self, data):
         return [self._format_obj(x) for x in data]
 
-    def _format_obj(self, obj: ProblemSetLatePermission):
+    def _format_obj(self, obj: ProblemSetLatePermission, ps_name: str = None):
         data = self.dealData(
             obj,
             ["create_time", "update_time", "start_time"],
             []
         )
+        if ps_name:
+            data["ps_name"] = ps_name
         # 统一补充截止时间信息
         start_ms = data.get("start_time")
         start_dt = None
