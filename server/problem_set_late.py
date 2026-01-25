@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from model.late_permission import latePermissionModel
 from ser.late_permission import (
     ser_late_permission_add,
+    ser_late_permission_batch_add,
     ser_late_permission_list,
     ser_late_permission_update,
 )
@@ -34,6 +35,24 @@ def add_permission(data: dict = Depends(ser_late_permission_add)):
     except IntegrityError:
         raise HTTPException(status_code=409, detail="late permission already exists")
     return makeResponse(None)
+
+
+@router.post("/batch_add")
+def batch_add_permission(payloads: list = Depends(ser_late_permission_batch_add)):
+    db = latePermissionModel()
+    created = []
+    conflicts = []
+    for payload in payloads:
+        try:
+            db.create(payload)
+            created.append(payload["psid"])
+        except IntegrityError:
+            conflicts.append(payload["psid"])
+    return makeResponse({
+        "created": created,
+        "conflicts": conflicts,
+        "requested": len(payloads),
+    })
 
 
 @router.post("/update")

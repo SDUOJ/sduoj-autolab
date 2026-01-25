@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 
 from model.answer_sheet import answerSheetModel
 from ser.answer_sheet import routerTypeBaseWithUsername, ser_preview
-from ser.problem_set import ser_problem_set_summary
+from ser.problem_set import ser_problem_set_summary, ser_personal_tag_summary
 from utils import makeResponse
 
 router = APIRouter(
@@ -15,6 +15,16 @@ async def summary(data: dict = Depends(ser_problem_set_summary)):
     db = answerSheetModel()
     return makeResponse(
         await db.get_all_progress_cache(data["psid"], data["code"]))
+
+
+@router.post("/personal_tag_summary")
+async def personal_tag_summary_api(data: dict = Depends(ser_personal_tag_summary)):
+    db = answerSheetModel()
+    return makeResponse(
+        await db.get_user_personal_tag_summary_cache(
+            data["groupId"], data["username"], data.get("force", False)
+        )
+    )
 
 
 @router.post("/preview")

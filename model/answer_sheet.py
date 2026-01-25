@@ -11,7 +11,7 @@ from sqlalchemy import and_
 from cache import class_func_key_builder
 from db import ProblemSetAnswerSheet, \
     ProblemSetAnswerSheetDetail, ProblemObjective, \
-    ProblemSubjective
+    ProblemSubjective, ProblemSet
 from model.problem_group import groupModel
 from model.problem_set import problemSetModel
 from sduojApi import getProblemInfo, programSubmit, getSubmissionScoreAll, \
@@ -215,15 +215,12 @@ class answerSheetModel(problemSetModel, groupModel):
         return {}
 
     # @cache(expire=60, key_builder=class_func_key_builder)
-    async def get_user_progress(self, psid, username):
-        as_obj = self.get_obj_by_psid_username(psid, username)
-        asid = as_obj.asid
-
-        # 获取这个题单所有答题卡的详细信息
-        asd_data = self.session.query(ProblemSetAnswerSheetDetail).filter(
-            ProblemSetAnswerSheetDetail.asid == asid,
-        ).all()
-
+    async def get_user_progress(self, psid, username, force_report=False):
+        as_obj = self.session.query(ProblemSetAnswerSheet).filter(
+            ProblemSetAnswerSheet.psid == psid,
+            ProblemSetAnswerSheet.username == username
+        ).first()
+        
         id2index, sz_list = await self.get_gid_pid2indexDict_cache(psid)
 
         # 初始化
@@ -233,6 +230,16 @@ class answerSheetModel(problemSetModel, groupModel):
             for j in range(sz_list[i]):
                 r.append({"index": j, "hasAnswer": False, "collect": 0})
             data.append(r)
+
+        if as_obj is None:
+            return data
+
+        asid = as_obj.asid
+
+        # 获取这个题单所有答题卡的详细信息
+        asd_data = self.session.query(ProblemSetAnswerSheetDetail).filter(
+            ProblemSetAnswerSheetDetail.asid == asid,
+        ).all()
 
         # 详细统计每个题的信息
         for x in asd_data:
@@ -244,12 +251,71 @@ class answerSheetModel(problemSetModel, groupModel):
                 "collect": asd["collect"]
             })
             # 编程题的评测结果可以实时显示
-            if tp == 2 or await self.check_group_finish_by_psid_gi(psid, i):
+            if force_report or tp == 2 or await self.check_group_finish_by_psid_gi(psid, i):
                 report = await self.get_pro_report(
                     psid, asd, gid, pid, i, j, username
                 )
                 data[i][j].update(report)
         return data
+
+    @cache(expire=300, key_builder=class_func_key_builder)
+    async def get_user_personal_tag_summary_cache(self, groupId: int, username: str, force_report: bool = False):
+        """获取用户在指定 Group 下所有题单的汇总情况，按 Tag 进行聚类。"""
+        # 1. 查询该 Group 下所有题单
+        ps_query = self.session.query(ProblemSet).filter(
+            ProblemSet.groupId == groupId
+        ).all()
+        
+        ps_list = self.dealDataList(ps_query, ["create_time", "tm_start", "tm_end"])
+        
+        result = {}
+        for ps in ps_list:
+            self.jsonLoads(ps, ["groupInfo", "config"])
+            # 2. 如果题单没有开启报告模式，则学生查看时，不显示该题单（管理员 force_report 模式除外）
+            is_report_on = ps.get("config", {}).get("showReport") == 1
+            if not force_report and not is_report_on:
+                continue
+
+            psid = ps["psid"]
+            tag = ps.get("tag") or "未分类"
+            if tag not in result:
+                result[tag] = []
+
+            # 获取包含权重换算后的题单详细结构
+            ps_detail = await self.ps_get_info_detail_by_id_cache(psid)
+
+            # 3. 复用已有的个人进度获取逻辑
+            progress = await self.get_user_progress(psid, username, force_report)
+            
+            groups = []
+            for gi, g_meta in enumerate(ps_detail["groupInfo"]):
+                problems = []
+                for pi, prob in enumerate(g_meta["problemInfo"]):
+                    p_prog = progress[gi][pi]
+                    problems.append({
+                        "pid": prob.get("pid_backup"),
+                        "name": prob.get("name") or f"题目 {pi + 1}",
+                        "hasAnswer": p_prog.get("hasAnswer", False),
+                        "score": p_prog.get("score", 0) if "score" in p_prog else p_prog.get("s", 0),
+                        "point": prob.get("point", 0),  # 原有的满分（基于100）
+                        "weighted_point": prob.get("weighted_point", 0)  # 应用 global_score 权重后的满分
+                    })
+                
+                groups.append({
+                    "gid": g_meta.get("index"), # 题单内的索引
+                    "name": g_meta.get("name") or f"分组 {gi + 1}",
+                    "type": g_meta.get("type"),
+                    "problems": problems
+                })
+            
+            result[tag].append({
+                "psid": psid,
+                "name": ps.get("name") or "未命名题单",
+                "groups": groups,
+                "global_score": ps.get("global_score", 0)
+            })
+            
+        return result
 
     @cache(expire=60, key_builder=class_func_key_builder)
     async def get_all_progress_cache(self, psid, get_code):
@@ -368,13 +434,17 @@ class answerSheetModel(problemSetModel, groupModel):
         for i in range(len(data["groupInfo"])):
             gs += data["groupInfo"][i]["score"]
 
+        # 获取权重分（总分），默认 100
+        total_scale = data.get("global_score") if data.get("global_score") is not None else 100
+
         for i in range(len(data["groupInfo"])):
             gid = data["groupInfo"][i]["gid"]
             s = data["groupInfo"][i]["score"]
             data["groupInfo"][i].pop("gid")
             data["groupInfo"][i].pop("score")
             data["groupInfo"][i]["index"] = i
-            data["groupInfo"][i]["point"] = s / gs * 100
+            data["groupInfo"][i]["point"] = s / gs * 100 if gs > 0 else 0  # 保留原有逻辑，基于100分
+            data["groupInfo"][i]["weighted_point"] = s / gs * total_scale if gs > 0 else 0  # 应用 global_score 权重
 
             group = await self.group_get_info_c_by_id(gid)
             data["groupInfo"][i]["type"] = group["type"]
@@ -387,7 +457,6 @@ class answerSheetModel(problemSetModel, groupModel):
                 ps += problemInfo[j]["score"]
 
             for j in range(len(problemInfo)):
-
                 # 将题目答案集成进数据中
                 if getAnswer:
                     pid = problemInfo[j]["pid"]
@@ -409,7 +478,10 @@ class answerSheetModel(problemSetModel, groupModel):
 
                 problemInfo[j]["index"] = j
                 problemInfo[j]["point"] = problemInfo[j]["score"] / ps * \
-                                          data["groupInfo"][i]["point"]
+                                          data["groupInfo"][i]["point"] if ps > 0 else 0  # 保留原有逻辑
+                problemInfo[j]["weighted_point"] = problemInfo[j]["score"] / ps * \
+                                          data["groupInfo"][i]["weighted_point"] if ps > 0 else 0  # 应用权重后的分值
+                problemInfo[j]["pid_backup"] = problemInfo[j].get("pid") # 备份一份 pid，防止被 pop 丢失
                 problemInfo[j].pop("pid")
                 problemInfo[j].pop("score")
                 proInfo.append(problemInfo[j])

@@ -1,7 +1,7 @@
 import json
 from typing import List, Optional
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from fastapi_cache.decorator import cache
 from pydantic import BaseModel, validator, root_validator
 
@@ -114,6 +114,12 @@ class problem_set_summary(problem_set_psid):
     code: int
 
 
+class personal_tag_summary(BaseModel):
+    groupId: int
+    username: Optional[str]
+    force: bool = False
+
+
 class problem_set_edit(problem_set_psid):
     name: Optional[str]
     description: Optional[str]
@@ -153,6 +159,38 @@ def ser_problem_set_summary(data: problem_set_summary,
                             SDUOJUserInfo=Depends(cover_header)):
     problem_set_manager(data.psid, SDUOJUserInfo)
     return obj2dict(data)
+
+
+def ser_personal_tag_summary(data: personal_tag_summary,
+                             SDUOJUserInfo=Depends(cover_header)):
+    from auth import group_manager, in_group, is_superadmin
+    requester = SDUOJUserInfo["username"]
+    
+    # 检查是否为该 group 的管理员或超级管理员
+    is_group_adm = False
+    try:
+        group_manager(data.groupId, SDUOJUserInfo)
+        is_group_adm = True
+    except HTTPException:
+        is_group_adm = False
+
+    # 只有当前 group 的管理员 或超级管理员可以查看 这个 group 内任意学生的信息
+    if data.username and data.username != requester:
+        if not is_group_adm:
+            raise HTTPException(status_code=403, detail="权限不足，仅组管理员可查看他人报告")
+    else:
+        # 默认查询自己
+        data.username = requester
+        # 如果不是管理员，必须在组内才能查看自己的
+        if not is_group_adm:
+            in_group(data.groupId, SDUOJUserInfo)
+
+    # force 字段仅管理员可用
+    if data.force and not is_group_adm:
+        data.force = False
+
+    res = obj2dict(data)
+    return res
 
 
 def ser_problem_set_add(data: problem_set_base,

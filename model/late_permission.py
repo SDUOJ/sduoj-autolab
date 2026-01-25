@@ -9,6 +9,9 @@ from utilsTime import getNowTime, getMsTime
 
 class latePermissionModel(dbSession):
     def create(self, data: dict):
+        if data.get("start_time") is None:
+            data = data.copy()
+            data["start_time"] = datetime.fromtimestamp(getNowTime() / 1000)
         self.session.add(ProblemSetLatePermission(**data))
         try:
             self.session.commit()
@@ -65,16 +68,18 @@ class latePermissionModel(dbSession):
         )
         # 统一补充截止时间信息
         start_ms = data.get("start_time")
+        start_dt = None
         if start_ms is not None:
             try:
                 start_dt = datetime.fromtimestamp(int(start_ms) / 1000)
             except Exception:
                 start_dt = None
-            if start_dt is not None:
-                expire_dt = start_dt + timedelta(minutes=obj.duration_minute)
-                data["expire_time"] = getMsTime(expire_dt)
-            else:
-                data["expire_time"] = None
+        if start_dt is None and obj.create_time is not None:
+            start_dt = obj.create_time
+            data["start_time"] = getMsTime(start_dt)
+        if start_dt is not None:
+            expire_dt = start_dt + timedelta(minutes=obj.duration_minute)
+            data["expire_time"] = getMsTime(expire_dt)
         else:
             data["expire_time"] = None
         data["duration_minute"] = obj.duration_minute
@@ -90,7 +95,7 @@ class latePermissionModel(dbSession):
             now_ms = getNowTime()
         start_dt = obj.start_time
         if start_dt is None:
-            start_dt = datetime.fromtimestamp(now_ms / 1000)
+            start_dt = obj.create_time or datetime.fromtimestamp(now_ms / 1000)
             self.session.query(ProblemSetLatePermission).filter(
                 ProblemSetLatePermission.id == obj.id
             ).update({"start_time": start_dt})
@@ -125,9 +130,10 @@ class latePermissionModel(dbSession):
     def deactivate_if_expired(self, obj: ProblemSetLatePermission, now_ms: int = None):
         if now_ms is None:
             now_ms = getNowTime()
-        if obj.start_time is None:
+        start_dt = obj.start_time or obj.create_time
+        if start_dt is None:
             return False
-        expire_dt = obj.start_time + timedelta(minutes=obj.duration_minute)
+        expire_dt = start_dt + timedelta(minutes=obj.duration_minute)
         if expire_dt.timestamp() * 1000 < now_ms and obj.is_active == 1:
             self.session.query(ProblemSetLatePermission).filter(
                 ProblemSetLatePermission.id == obj.id
