@@ -14,7 +14,7 @@ from datetime import datetime
 class LatePermissionBase(BaseModel):
     psid: int
     username: str
-    duration_minute: int
+    expire_time: int
     discount: float
     note: Optional[str] = None
 
@@ -25,10 +25,10 @@ class LatePermissionBase(BaseModel):
             raise ValueError('username is empty')
         return v
 
-    @validator('duration_minute')
-    def duration_positive(cls, v):
-        if v <= 0:
-            raise ValueError('duration must be positive')
+    @validator('expire_time')
+    def expire_time_future(cls, v):
+        if v <= getNowTime():
+            raise ValueError('expire_time must be in the future')
         return v
 
     @validator('discount')
@@ -50,15 +50,15 @@ class LatePermissionBase(BaseModel):
 class LatePermissionUpdate(BaseModel):
     id: int
     psid: int
-    duration_minute: Optional[int] = None
+    expire_time: Optional[int] = None
     discount: Optional[float] = None
     is_active: Optional[int] = None
     note: Optional[str] = None
 
-    @validator('duration_minute')
-    def duration_positive(cls, v):
-        if v is not None and v <= 0:
-            raise ValueError('duration must be positive')
+    @validator('expire_time')
+    def expire_time_future(cls, v):
+        if v is not None and v <= getNowTime():
+            raise ValueError('expire_time must be in the future')
         return v
 
     @validator('discount')
@@ -101,7 +101,7 @@ class LatePermissionBatchAdd(BaseModel):
     groupId: int
     psids: List[int]
     username: str
-    duration_minute: int
+    expire_time: int
     discount: float
     note: Optional[str] = None
 
@@ -127,10 +127,10 @@ class LatePermissionBatchAdd(BaseModel):
             raise ValueError('username is empty')
         return v
 
-    @validator('duration_minute')
-    def duration_positive(cls, v):
-        if v <= 0:
-            raise ValueError('duration must be positive')
+    @validator('expire_time')
+    def expire_time_future(cls, v):
+        if v <= getNowTime():
+            raise ValueError('expire_time must be in the future')
         return v
 
     @validator('discount')
@@ -233,7 +233,7 @@ def ser_late_permission_batch_add(
             "psid": psid,
             "groupId": ps_obj.groupId,
             "username": data.username,
-            "duration_minute": data.duration_minute,
+            "expire_time": data.expire_time,
             "discount": data.discount,
             "note": data.note,
             "created_by": SDUOJUserInfo["username"],

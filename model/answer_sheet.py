@@ -428,7 +428,8 @@ class answerSheetModel(problemSetModel, groupModel):
     # 补充题单中的细节详细数据
     @cache(expire=60, key_builder=class_func_key_builder)
     async def ps_get_info_detail_by_id_cache(self, psid, getAnswer=False):
-        data = await self.ps_get_info_by_id_cache(psid)
+        cached_ps_info = await self.ps_get_info_by_id_cache(psid)
+        data = copy.deepcopy(cached_ps_info)
         # 计算组的分数
         gs = 0
         for i in range(len(data["groupInfo"])):
@@ -446,7 +447,8 @@ class answerSheetModel(problemSetModel, groupModel):
             data["groupInfo"][i]["point"] = s / gs * 100 if gs > 0 else 0  # 保留原有逻辑，基于100分
             data["groupInfo"][i]["weighted_point"] = s / gs * total_scale if gs > 0 else 0  # 应用 global_score 权重
 
-            group = await self.group_get_info_c_by_id(gid)
+            cached_group = await self.group_get_info_c_by_id(gid)
+            group = copy.deepcopy(cached_group)
             data["groupInfo"][i]["type"] = group["type"]
 
             problemInfo = group["problemInfo"]
@@ -491,7 +493,8 @@ class answerSheetModel(problemSetModel, groupModel):
 
     # 获取题单详细数据
     async def ps_get_info_c_by_id(self, id_, username):
-        data = await self.ps_get_info_detail_by_id_cache(id_)
+        cached_data = await self.ps_get_info_detail_by_id_cache(id_)
+        data = copy.deepcopy(cached_data)
         up = await self.get_user_progress(id_, username)
         for i in range(len(data["groupInfo"])):
             # 维护分值的显示
@@ -631,7 +634,7 @@ class answerSheetModel(problemSetModel, groupModel):
     def _get_late_context(self, psid, username, time=None):
         try:
             from model.late_permission import latePermissionModel
-            return latePermissionModel().get_active_context(psid, username, time)
+            return latePermissionModel().get_active_context(int(psid), str(username), time)
         except Exception:
             return None
 

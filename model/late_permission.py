@@ -12,6 +12,13 @@ class latePermissionModel(dbSession):
         if data.get("start_time") is None:
             data = data.copy()
             data["start_time"] = datetime.fromtimestamp(getNowTime() / 1000)
+
+        # 支持传入 expire_time 并换算为 duration_minute
+        if "expire_time" in data:
+            expire_ms = int(data.pop("expire_time"))
+            start_ms = int(data["start_time"].timestamp() * 1000)
+            data["duration_minute"] = max(1, (expire_ms - start_ms) // 60000)
+
         self.session.add(ProblemSetLatePermission(**data))
         try:
             self.session.commit()
@@ -23,12 +30,23 @@ class latePermissionModel(dbSession):
         if "start_time" in data:
             # start_time 在此接口不允许直接修改
             data.pop("start_time")
+
+        # 支持传入 expire_time 并换算为 duration_minute
+        if "expire_time" in data:
+            expire_ms = int(data.pop("expire_time"))
+            obj = self.get_obj_by_id(pid)
+            start_dt = obj.start_time or obj.create_time
+            start_ms = int(start_dt.timestamp() * 1000)
+            data["duration_minute"] = max(1, (expire_ms - start_ms) // 60000)
+
         self.session.query(ProblemSetLatePermission).filter(
             ProblemSetLatePermission.id == pid
         ).update(data)
         self.session.commit()
 
     def get_obj_by_psid_username(self, psid: int, username: str):
+        if username:
+            username = username.strip()
         return self.session.query(ProblemSetLatePermission).filter(
             and_(
                 ProblemSetLatePermission.psid == psid,
@@ -96,40 +114,18 @@ class latePermissionModel(dbSession):
         data["discount"] = obj.discount
         return data
 
-    def ensure_activation(self, obj: ProblemSetLatePermission, now_ms: int = None):
-        if obj is None:
-            return None
-        if obj.is_active != 1:
-            return None
-        if now_ms is None:
-            now_ms = getNowTime()
-        start_dt = obj.start_time
-        if start_dt is None:
-            start_dt = obj.create_time or datetime.fromtimestamp(now_ms / 1000)
-            self.session.query(ProblemSetLatePermission).filter(
-                ProblemSetLatePermission.id == obj.id
-            ).update({"start_time": start_dt})
-            self.session.commit()
-        else:
-            start_ms = int(getMsTime(start_dt))
-            if start_ms > now_ms:
-                # 数据异常时，重置为当前时间
-                start_dt = datetime.fromtimestamp(now_ms / 1000)
-                self.session.query(ProblemSetLatePermission).filter(
-                    ProblemSetLatePermission.id == obj.id
-                ).update({"start_time": start_dt})
-                self.session.commit()
-        return self.get_obj_by_id(obj.id)
-
     def get_active_permission(self, psid: int, username: str, now_ms: int = None):
         if now_ms is None:
             now_ms = getNowTime()
         obj = self.get_obj_by_psid_username(psid, username)
         if obj is None:
             return None
-        # 如果尚未启用，则立即启用
-        obj = self.ensure_activation(obj, now_ms)
-        start_dt = obj.start_time
+
+        # 补交权限已不再支持延迟激活，直接校验状态和时间
+        if obj.is_active != 1:
+            return None
+
+        start_dt = obj.start_time or obj.create_time
         if start_dt is None:
             return None
         expire_dt = start_dt + timedelta(minutes=obj.duration_minute)
