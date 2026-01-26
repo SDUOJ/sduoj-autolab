@@ -2,9 +2,9 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from auth import cover_header, problem_set_manager
+from auth import cover_header, problem_set_manager, group_manager
 from utils import makeResponse
 from ser.base_type import page
 from model.answer_sheet import answerSheetModel
@@ -67,7 +67,10 @@ async def create_subjective_review_tasks(
 
 
 class AutoTaskListRequest(BaseModel):
-    psid: int
+    psid: Optional[int] = None
+    groupId: Optional[int] = None
+    contestId: Optional[int] = None
+    problemId: Optional[int] = None
     pageNow: int = 1
     pageSize: int = 20
     status: Optional[str] = None
@@ -76,16 +79,28 @@ class AutoTaskListRequest(BaseModel):
 
 
 @router.post("/list")
-async def list_ps_auto_tasks(
+async def list_auto_tasks(
         data: AutoTaskListRequest,
         user=Depends(cover_header)):
-    problem_set_manager(data.psid, user)
+    if data.psid is not None:
+        problem_set_manager(data.psid, user)
+    elif data.groupId is not None:
+        group_manager(data.groupId, user)
+    # 可以在此添加 contestId 或 其他维度的权限校验 logic
+
     from model.auto_task import autoTaskModel
     model = autoTaskModel()
     try:
         pg = page(pageNow=data.pageNow, pageSize=data.pageSize)
-        total, rows = model.list_tasks_by_psid(
-            data.psid, pg, data.taskType, data.status, data.username
+        total, rows = model.list_tasks_by_params(
+            pg=pg,
+            psid=data.psid,
+            groupId=data.groupId,
+            contestId=data.contestId,
+            problemId=data.problemId,
+            task_type=data.taskType,
+            status=data.status,
+            username=data.username
         )
     finally:
         model.session.close()
@@ -94,6 +109,41 @@ async def list_ps_auto_tasks(
         "pageSize": data.pageSize,
         "total": total,
         "rows": rows,
+    })
+
+
+class SummaryReportRequest(BaseModel):
+    """成绩报告生成请求参数"""
+    groupId: int
+    psids: Optional[List[int]] = Field(default=None, description="题单 ID 列表，留空则导出该小组所有题单")
+
+
+@router.post("/summary/export")
+async def create_summary_report_task(
+    data: SummaryReportRequest,
+    userinfo: dict = Depends(cover_header)
+):
+    """
+    创建成绩报告导出任务 (小组维度)
+    """
+    group_manager(data.groupId, userinfo)
+    
+    from model.auto_task import autoTaskModel
+    model = autoTaskModel()
+    
+    payload = data.dict()
+    payload["userId"] = userinfo["userId"]
+    
+    task_id = model.add_task(
+        task_type="summary_report",
+        psid=None,
+        groupId=data.groupId,
+        payload=payload
+    )
+    
+    return makeResponse({
+        "taskId": task_id,
+        "message": "成绩报告生成任务已创建，请稍后查看任务状态"
     })
 
 
@@ -106,8 +156,11 @@ async def get_task_detail(task_id: str, user=Depends(cover_header)):
     finally:
         model.session.close()
     psid = detail.get("psid")
+    groupId = detail.get("groupId")
     if psid is not None:
         problem_set_manager(psid, user)
+    elif groupId is not None:
+        group_manager(groupId, user)
     logs = detail.pop("logs", [])
     detail["logs"] = logs
     return makeResponse(detail)
@@ -156,8 +209,11 @@ async def rerun_task(task_id: str, user=Depends(cover_header)):
     try:
         detail = model.get_task_detail(task_id)
         psid = detail.get("psid")
+        groupId = detail.get("groupId")
         if psid is not None:
             problem_set_manager(psid, user)
+        elif groupId is not None:
+            group_manager(groupId, user)
         model.rerun_task(task_id)
     finally:
         model.session.close()
@@ -171,12 +227,20 @@ async def delete_task(task_id: str, user=Depends(cover_header)):
     try:
         detail = model.get_task_detail(task_id)
         psid = detail.get("psid")
+        groupId = detail.get("groupId")
         if psid is not None:
             problem_set_manager(psid, user)
+        elif groupId is not None:
+            group_manager(groupId, user)
         model.delete_task(task_id)
     finally:
         model.session.close()
     return makeResponse({"taskId": task_id, "deleted": True})
+
+
+@router.post("/delete/{task_id}")
+async def delete_task_legacy(task_id: str, user=Depends(cover_header)):
+    return await delete_task(task_id, user)
 
 
 def _build_subjective_summary(

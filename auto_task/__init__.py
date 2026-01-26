@@ -9,6 +9,7 @@ from .worker import start_background_worker
 # Import builtin tasks so they register themselves with the registry.
 from . import code_similarity as _code_similarity  # noqa: F401
 from . import subjective_review as _subjective_review  # noqa: F401
+from . import summary_report as _summary_report  # noqa: F401
 
 _LAZY_IMPORTS = {
     "AutoTaskLLMClient": ("auto_task.llm_client", "AutoTaskLLMClient"),

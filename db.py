@@ -524,6 +524,15 @@ class AutoTaskRun(Base):
     # 便于筛选某个题单的任务
     psid = Column(INTEGER, nullable=True, index=True)
 
+    # 便于筛选某个小组的任务
+    groupId = Column(INTEGER, nullable=True, index=True)
+
+    # 便于筛选某个比赛的任务
+    contestId = Column(INTEGER, nullable=True, index=True)
+
+    # 便于筛选某个题目的任务
+    problemId = Column(INTEGER, nullable=True, index=True)
+
     # 关联的学生
     username = Column(VARCHAR(63), nullable=True, index=True)
 

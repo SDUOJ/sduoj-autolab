@@ -1,7 +1,7 @@
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import redis
 from fastapi import HTTPException
@@ -32,11 +32,11 @@ class autoTaskModel(dbSession):
         self.redis = autoTaskModel._redis_client
 
     # ------------------------ task creation ------------------------
-    def add_task(self, task_type: str, psid: Optional[int], payload: Any) -> str:
-        ids = self.add_tasks(task_type, psid, [payload])
+    def add_task(self, task_type: str, psid: Optional[int], payload: Any, groupId: Optional[int] = None, contestId: Optional[int] = None, problemId: Optional[int] = None) -> str:
+        ids = self.add_tasks(task_type, psid, [payload], groupId=groupId, contestId=contestId, problemId=problemId)
         return ids[0] if ids else ""
 
-    def add_tasks(self, task_type: str, psid: Optional[int], payload_list: List[Any]) -> List[str]:
+    def add_tasks(self, task_type: str, psid: Optional[int], payload_list: List[Any], groupId: Optional[int] = None, contestId: Optional[int] = None, problemId: Optional[int] = None) -> List[str]:
         if payload_list is None or len(payload_list) == 0:
             return []
 
@@ -49,6 +49,9 @@ class autoTaskModel(dbSession):
                 id=task_id,
                 task_type=task_type,
                 psid=self._resolve_psid(psid, payload),
+                groupId=self._resolve_groupId(groupId, payload),
+                contestId=self._resolve_contestId(contestId, payload),
+                problemId=self._resolve_problemId(problemId, payload),
                 username=self._extract_username(payload),
                 status="pending",
             )
@@ -98,6 +101,9 @@ class autoTaskModel(dbSession):
                 id=task_id,
                 task_type=task_type,
                 psid=self._resolve_psid(None, payload),
+                groupId=self._resolve_groupId(None, payload),
+                contestId=self._resolve_contestId(None, payload),
+                problemId=self._resolve_problemId(None, payload),
                 username=self._extract_username(payload),
                 status="running",
                 start_time=now,
@@ -109,6 +115,12 @@ class autoTaskModel(dbSession):
             record.task_type = task_type
             if record.psid is None:
                 record.psid = self._resolve_psid(None, payload)
+            if record.groupId is None:
+                record.groupId = self._resolve_groupId(None, payload)
+            if record.contestId is None:
+                record.contestId = self._resolve_contestId(None, payload)
+            if record.problemId is None:
+                record.problemId = self._resolve_problemId(None, payload)
             if record.username is None:
                 record.username = self._extract_username(payload)
             record.status = "running"
@@ -167,14 +179,26 @@ class autoTaskModel(dbSession):
         )
         return data
 
-    def list_tasks_by_psid(
-            self, psid: int, pg: page, task_type: Optional[str] = None,
-            status: Optional[str] = None, username: Optional[str] = None) -> Dict[str, Any]:
-        if psid is None:
-            raise HTTPException(status_code=400, detail="psid 为必填项")
-        query = self.session.query(AutoTaskRun).filter(
-            AutoTaskRun.psid == psid
-        )
+    def list_tasks_by_params(
+            self,
+            pg: page,
+            psid: Optional[int] = None,
+            groupId: Optional[int] = None,
+            contestId: Optional[int] = None,
+            problemId: Optional[int] = None,
+            task_type: Optional[str] = None,
+            status: Optional[str] = None,
+            username: Optional[str] = None
+    ) -> Tuple[int, List[Dict[str, Any]]]:
+        query = self.session.query(AutoTaskRun)
+        if psid is not None:
+            query = query.filter(AutoTaskRun.psid == psid)
+        if groupId is not None:
+            query = query.filter(AutoTaskRun.groupId == groupId)
+        if contestId is not None:
+            query = query.filter(AutoTaskRun.contestId == contestId)
+        if problemId is not None:
+            query = query.filter(AutoTaskRun.problemId == problemId)
         if task_type is not None:
             query = query.filter(AutoTaskRun.task_type == task_type)
         if status is not None:
@@ -208,6 +232,12 @@ class autoTaskModel(dbSession):
         record.end_time = None
         if record.psid is None:
             record.psid = self._resolve_psid(record.psid, payload_data)
+        if record.groupId is None:
+            record.groupId = self._resolve_groupId(record.groupId, payload_data)
+        if record.contestId is None:
+            record.contestId = self._resolve_contestId(record.contestId, payload_data)
+        if record.problemId is None:
+            record.problemId = self._resolve_problemId(record.problemId, payload_data)
         if record.username is None:
             record.username = self._extract_username(payload_data)
         self.session.commit()
@@ -296,10 +326,80 @@ class autoTaskModel(dbSession):
         return autoTaskModel._extract_psid(payload)
 
     @staticmethod
+    def _resolve_groupId(groupId: Optional[int], payload: Any = None) -> Optional[int]:
+        if groupId is not None:
+            try:
+                return int(groupId)
+            except (TypeError, ValueError):
+                return None
+        return autoTaskModel._extract_groupId(payload)
+
+    @staticmethod
+    def _resolve_contestId(contestId: Optional[int], payload: Any = None) -> Optional[int]:
+        if contestId is not None:
+            try:
+                return int(contestId)
+            except (TypeError, ValueError):
+                return None
+        return autoTaskModel._extract_contestId(payload)
+
+    @staticmethod
+    def _resolve_problemId(problemId: Optional[int], payload: Any = None) -> Optional[int]:
+        if problemId is not None:
+            try:
+                return int(problemId)
+            except (TypeError, ValueError):
+                return None
+        return autoTaskModel._extract_problemId(payload)
+
+    @staticmethod
     def _extract_psid(payload: Any) -> Optional[int]:
         if not isinstance(payload, dict):
             return None
         value = payload.get("psid")
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _extract_groupId(payload: Any) -> Optional[int]:
+        if not isinstance(payload, dict):
+            return None
+        # payload might use 'groupId' or 'gid'
+        value = payload.get("groupId") or payload.get("gid")
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _extract_contestId(payload: Any) -> Optional[int]:
+        if not isinstance(payload, dict):
+            return None
+        value = payload.get("contestId")
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _extract_problemId(payload: Any) -> Optional[int]:
+        if not isinstance(payload, dict):
+            return None
+        value = payload.get("problemId") or payload.get("pid")
         if value is None:
             return None
         if isinstance(value, int):

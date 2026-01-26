@@ -644,6 +644,16 @@ class answerSheetModel(problemSetModel, groupModel):
             time = getNowTime()
         if type(time) != int:
             time = int(time)
+        ps_start = ps_info.get("tm_start")
+        try:
+            ps_start_int = int(ps_start) if ps_start is not None else None
+        except (TypeError, ValueError):
+            ps_start_int = None
+        if ps_start_int is not None:
+            if time < 100_000_000_000 and ps_start_int > 100_000_000_000:
+                time = int(time * 1000)
+            elif time > 1_000_000_000_000 and ps_start_int < 100_000_000_000:
+                time = int(time / 1000)
         if ps_info["config"]["useSameSE"] == 1:
             if inTime(time, int(ps_info["tm_start"]), int(ps_info["tm_end"])):
                 return 1, True
