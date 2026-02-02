@@ -51,13 +51,16 @@ async def create_subjective_review_tasks(
     task_ids: List[str] = []
     try:
         for psid, tasks in grouped.items():
-            ps_group_id = model.session.query(ProblemSet.groupId).filter(ProblemSet.psid == psid).scalar()
+            ps_obj = model.session.query(ProblemSet).filter(ProblemSet.psid == psid).first()
+            ps_group_id = ps_obj.groupId if ps_obj else None
+            ps_description = ps_obj.description if ps_obj else None
             payloads = [
                 {
                     "psid": item.psid,
                     "gid": item.gid,
                     "pid": item.pid,
                     "username": item.username,
+                    "ps_description": ps_description,
                     "programmingProblems": [pp.dict() for pp in item.programmingProblems],
                 }
                 for item in tasks
