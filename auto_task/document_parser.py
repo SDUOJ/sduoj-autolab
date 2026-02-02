@@ -286,12 +286,23 @@ async def _embed_images(base_text: str, images: Sequence[ImageResource], user_id
     
     print(f"找到{len(file_indices)}张图片需要描述，开始调用 LLM 进行描述...")
     
+    # 每次最多批量处理 8 张图片
+    BATCH_SIZE = 8
     target_file_ids = [images[idx].file_id for idx in file_indices]
-    descriptions = await describe_images_to_text(target_file_ids, task_id=task_id)
+    all_descriptions = []
+    
+    # 分批处理图片
+    for batch_start in range(0, len(target_file_ids), BATCH_SIZE):
+        batch_end = min(batch_start + BATCH_SIZE, len(target_file_ids))
+        batch_file_ids = target_file_ids[batch_start:batch_end]
+        
+        print(f"正在处理第 {batch_start // BATCH_SIZE + 1} 批图片 (共 {len(batch_file_ids)} 张)...")
+        batch_descriptions = await describe_images_to_text(batch_file_ids, task_id=task_id)
+        all_descriptions.extend(batch_descriptions)
 
     markdown = base_text
     for order, idx in enumerate(file_indices):
-        desc = descriptions[order]
+        desc = all_descriptions[order]
         replacement = desc.strip() + "\n"
         markdown = markdown.replace(IMAGE_PLACEHOLDER.format(idx), replacement, 1)
     return markdown

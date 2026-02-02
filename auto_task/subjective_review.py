@@ -220,6 +220,7 @@ class _SubjectiveReviewService:
             call_structured_llm(
                 messages=[{"role": "user", "content": prompt}],
                 schema_model=SubjectiveReviewLLMResult,
+                task_id=self.task_id,
             )
         )
 

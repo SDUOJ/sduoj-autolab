@@ -110,7 +110,8 @@ async def call_structured_llm(
         messages: Sequence[Dict[str, str]],
         schema_model: Type[T],
         image_file_ids: Optional[Sequence[str]] = None,
-        max_retries: int = 3) -> T:
+        max_retries: int = 3,
+        task_id: Optional[str] = None) -> T:
     """Call the appropriate LLM and enforce JSON-structured output."""
 
     has_images = bool(image_file_ids)
@@ -139,6 +140,10 @@ async def call_structured_llm(
             except Exception as exc:  # pragma: no cover - defensive fallback
                 last_error = f"请求失败: {exc}"
                 break
+            
+            # 记录大模型的完整输出
+            _append_llm_response_log(task_id, config.model, has_images, response_text)
+            
             conversation.append({"role": "assistant", "content": response_text})
             try:
                 return _extract_and_validate(response_text, schema_model)
@@ -265,6 +270,7 @@ async def describe_images_to_text(file_ids: List[str], task_id: Optional[str] = 
         messages=[{"role": "user", "content": prompt}],
         schema_model=_ImageDescriptionList,
         image_file_ids=file_ids,
+        task_id=task_id,
     )
     
     desc_map = {item.index: item.text for item in result_list.items}
@@ -367,6 +373,24 @@ def _build_file_download_url(file_id: str) -> str:
     return f"https://oj.qd.sdu.edu.cn/api/filesys/download/{file_id}/{file_id}"
 
 
+def _append_llm_response_log(task_id: Optional[str], model_name: str, is_multimodal: bool, response_text: str) -> None:
+    """记录大模型的完整输出到日志"""
+    if not task_id:
+        return
+    model_type = "视觉模型" if is_multimodal else "文本模型"
+    markdown = f"**大模型响应 [{model_type}: {model_name}]**\n\n{response_text}"
+    model = autoTaskModel()
+    try:
+        model.add_log(task_id, "log", markdown)
+    except Exception as exc:
+        logger.warning("记录大模型响应日志失败 task_id=%s model=%s: %s", task_id, model_name, exc)
+    finally:
+        try:
+            model.session.close()
+        except Exception:
+            pass
+
+
 def _append_image_log_if_needed(task_id: Optional[str], file_id: str, text: str) -> None:
     if not task_id:
         return
@@ -390,19 +414,29 @@ async def _load_image_contents(file_ids: Sequence[str]) -> List[Dict[str, Any]]:
     image_contents: List[Dict[str, Any]] = []
     for idx, result in enumerate(results):
         if isinstance(result, Exception):
-            raise RuntimeError(f"下载文件 {file_ids[idx]} 失败: {result}")
+            logger.warning(f"下载文件 {file_ids[idx]} 失败: {result}，已跳过")
+            continue
         status, content, headers = result
         if status != 200:
-            raise RuntimeError(f"下载文件 {file_ids[idx]} 失败，状态码 {status}")
-        png_bytes = _coerce_image_to_png(content)
-        mime = "image/png"
-        encoded = base64.b64encode(png_bytes).decode("ascii")
-        image_contents.append({
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:{mime};base64,{encoded}",
-            }
-        })
+            logger.warning(f"下载文件 {file_ids[idx]} 失败，状态码 {status}，已跳过")
+            continue
+        try:
+            png_bytes = _coerce_image_to_png(content)
+            mime = "image/png"
+            encoded = base64.b64encode(png_bytes).decode("ascii")
+            image_contents.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime};base64,{encoded}",
+                }
+            })
+        except ValueError as e:
+            # 图片尺寸过小，跳过该图片
+            logger.warning(f"文件 {file_ids[idx]} {str(e)}，已跳过")
+            continue
+        except Exception as e:
+            logger.warning(f"处理文件 {file_ids[idx]} 失败: {e}，已跳过")
+            continue
     return image_contents
 
 
@@ -515,6 +549,13 @@ def _coerce_image_to_png(content: bytes) -> bytes:
         image = Image.open(io.BytesIO(content))
     except Exception as exc:  # pragma: no cover - defensive
         raise RuntimeError("无法解析图片内容") from exc
+    
+    # 检查图片尺寸，过滤掉过小的图片
+    MIN_DIMENSION = 14  # API要求的最小尺寸
+    width, height = image.size
+    if width < MIN_DIMENSION or height < MIN_DIMENSION:
+        raise ValueError(f"图片尺寸过小: {width}x{height}, 最小要求: {MIN_DIMENSION}x{MIN_DIMENSION}")
+    
     if image.mode not in ("RGB", "RGBA"):
         image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
     max_bytes = 1_048_576  # 1 MB upper limit
