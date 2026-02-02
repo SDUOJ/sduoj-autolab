@@ -20,18 +20,10 @@ from PIL import Image
 from pytesseract import Output
 
 from const import (
-    LLM_DEEPSEEK_API_KEY,
-    LLM_DEEPSEEK_BASE_URL,
-    LLM_DEEPSEEK_MODEL,
-    LLM_DEEPSEEK_FALLBACK_API_KEY,
-    LLM_DEEPSEEK_FALLBACK_BASE_URL,
-    LLM_DEEPSEEK_FALLBACK_MODEL,
     LLM_DOUBAO_API_KEY,
     LLM_DOUBAO_BASE_URL,
     LLM_DOUBAO_MODEL,
-    LLM_QWEN_API_KEY,
-    LLM_QWEN_BASE_URL,
-    LLM_QWEN_MODEL,
+    LLM_VOLC_DEEPSEEK_MODEL,
     LAYOUT_PARSING_API_URL,
 )
 from sduojApi import downloadFile
@@ -94,21 +86,6 @@ def _is_config_ready(config: LLMConfig) -> bool:
     return bool(config.base_url and config.api_key and config.model)
 
 
-QWEN_CONFIG = LLMConfig(
-    base_url=LLM_QWEN_BASE_URL,
-    api_key=LLM_QWEN_API_KEY,
-    model=LLM_QWEN_MODEL,
-    is_multimodal=True,
-    default_params={
-        "max_tokens": 8192,
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "top_k": 20,
-        "repetition_penalty": 1.0,
-        "presence_penalty": 0.0,
-    },
-)
-
 DOUBAO_CONFIG = LLMConfig(
     base_url=LLM_DOUBAO_BASE_URL,
     api_key=LLM_DOUBAO_API_KEY,
@@ -120,16 +97,12 @@ DOUBAO_CONFIG = LLMConfig(
     },
 )
 
-DEEPSEEK_CONFIG = LLMConfig(
-    base_url=LLM_DEEPSEEK_BASE_URL,
-    api_key=LLM_DEEPSEEK_API_KEY,
-    model=LLM_DEEPSEEK_MODEL,
-)
-
-DEEPSEEK_FALLBACK_CONFIG = LLMConfig(
-    base_url=LLM_DEEPSEEK_FALLBACK_BASE_URL,
-    api_key=LLM_DEEPSEEK_FALLBACK_API_KEY,
-    model=LLM_DEEPSEEK_FALLBACK_MODEL,
+# DeepSeek V3 on Volcengine (Text Only)
+VOLC_DEEPSEEK_CONFIG = LLMConfig(
+    base_url=LLM_DOUBAO_BASE_URL,
+    api_key=LLM_DOUBAO_API_KEY,
+    model=LLM_VOLC_DEEPSEEK_MODEL,
+    is_multimodal=False,
 )
 
 
@@ -143,12 +116,12 @@ async def call_structured_llm(
     has_images = bool(image_file_ids)
     configs: List[LLMConfig] = []
     if has_images:
-        configs = [cfg for cfg in (QWEN_CONFIG, DOUBAO_CONFIG) if _is_config_ready(cfg) and cfg.is_multimodal]
+        configs = [cfg for cfg in (DOUBAO_CONFIG,) if _is_config_ready(cfg) and cfg.is_multimodal]
         if not configs:
             raise ValueError("未找到可用的多模态 LLM 配置")
         image_contents = await _load_image_contents(image_file_ids or [])
     else:
-        configs = [cfg for cfg in (DEEPSEEK_CONFIG, DEEPSEEK_FALLBACK_CONFIG) if _is_config_ready(cfg)]
+        configs = [cfg for cfg in (VOLC_DEEPSEEK_CONFIG, DOUBAO_CONFIG) if _is_config_ready(cfg)]
         if not configs:
             raise ValueError("未找到可用的文本 LLM 配置")
         image_contents = []
@@ -241,68 +214,66 @@ def _extract_and_validate(response_text: str, schema_model: Type[T]) -> T:
         raise ValueError(f"JSON 结构不符合 schema: {exc}") from exc
 
 
-class _ImageDescription(BaseModel):
+class _ImageDescriptionItem(BaseModel):
+    index: int
     text: str
 
 
-async def describe_image_to_text(file_id: str, task_id: Optional[str] = None) -> str:
-    """Convert a single image (file_id) to a textual description."""
+class _ImageDescriptionList(BaseModel):
+    items: List[_ImageDescriptionItem]
 
-    ocr_reference = await _prepare_ocr_reference(file_id)
-    prompt_parts = [
+
+async def describe_images_to_text(file_ids: List[str], task_id: Optional[str] = None) -> List[str]:
+    """Convert multiple images (file_ids) to textual descriptions."""
+    if not file_ids:
+        return []
+
+    prompt = (
         "### 角色定义\n"
         "你是一个数据结构与算法课程的专业助教，同时具备高精度的OCR能力。你的任务是将学生手写的答题图片（可能包含代码、数学推导、复杂数据结构示意图）转换为机器可读的结构化文本，供自动评分系统使用。\n\n"
-        
+        "### 输入说明\n"
+        f"本次输入包含 {len(file_ids)} 张图片，请按照图片的输入顺序依次从 0 开始编号，并分别生成描述。\n\n"
         "### 核心原则\n"
         "1. **所见即所得**：如实记录内容，保留错误（不要修正学生的逻辑错误）。\n"
         "2. **语义显性化**：将图形中的视觉标记（颜色、形状、箭头）转化为明确的文本描述。\n"
         "3. **不解释，不拓展**：不要解释图中的内容，不要进行延伸拓展，客观的进行记录与描述。\n\n"
-        
         "### 细分处理规则\n"
-        
         "#### 1. 基础文本与代码\n"
         "- **文字**：完整转录，保留换行。\n"
         "- **数学公式**：使用 LaTeX 格式（如 $O(n^2)$）。\n"
         "- **代码**：保留代码缩进，代码中的高亮颜色无需描述。\n\n"
-        
         "#### 2. 线性结构（数组、链表、栈、队列）\n"
         "- **内容表示**：使用方括号或箭头表示序列，例如 `[1, 2, 3, 4]` 或 `Head -> Node A -> Node B`。\n"
         "- **指针与引用**：\n"
         "  - 若有外部箭头指向某个元素，请描述为：`(指针 p 指向元素 2)`。\n"
         "  - 若是指针断裂或重连（如链表删除操作），请描述：`(原连接 A->B 被打叉，新增虚线连接 A->C)`。\n"
         "- **索引标记**：如果元素旁边标有下标（i, j, top, rear），请明确关联，例如 `元素 5 (下方标记: i)`。\n\n"
-        
         "#### 3. 树形与图结构（二叉树、堆、图）\n"
         "- **结构描述**：优先使用 Mermaid 语法描述拓扑结构。\n"
         "- **若无法生成 Mermaid，使用缩进列表**，并必须包含节点属性。\n"
         "- **节点属性**：\n"
         "  - 若节点旁有数字（如平衡因子、深度），记录为 `节点 A {{属性: 平衡因子=1}}`。\n"
         "  - 若连接线有权重或方向，明确记录，如 `A --(权值:5)--> B`。\n\n"
-        
         "#### 4. 视觉状态与特殊标记\n"
         "图片中可能包含表示算法状态的视觉记号，请按以下格式提取：\n"
         "- **颜色/阴影**：若某部分被涂色或高亮（不包括代码高亮），描述其语义。例如 `节点 C (状态: 红色/涂黑)` 或 `数组索引 0-3 (状态: 灰色阴影/已排序区域)`。\n"
         "- **形状标记**：例如 `节点 D 被双圈包裹 (可能表示终态)` 或 `元素 5 被划掉 (Strikethrough)`。\n"
         "- **辅助符号**：如有对勾、叉号、问号，请明确其位置和关联对象。\n"
-    ]
-
-    if ocr_reference:
-        prompt_parts.append(
-            "### OCR 辅助（PaddleOCR 版面 + 文本，供校正参考）\n"
-            "下面是通过 PaddleOCR 版面模型得到的文字与结构检测结果。若与图片内容冲突，请以图片为准：\n"
-            f"{ocr_reference}"
-        )
-
-    prompt = "\n\n".join(prompt_parts) + "\n\n"
-
-    result = await call_structured_llm(
-        messages=[{"role": "user", "content": prompt}],
-        schema_model=_ImageDescription,
-        image_file_ids=[file_id],
     )
-    text = result.text
-    _append_image_log_if_needed(task_id, file_id, text)
-    return text
+
+    result_list = await call_structured_llm(
+        messages=[{"role": "user", "content": prompt}],
+        schema_model=_ImageDescriptionList,
+        image_file_ids=file_ids,
+    )
+    
+    desc_map = {item.index: item.text for item in result_list.items}
+    descriptions = [desc_map.get(i, "(未获取到描述)") for i in range(len(file_ids))]
+
+    for i, file_id in enumerate(file_ids):
+        _append_image_log_if_needed(task_id, file_id, descriptions[i])
+
+    return descriptions
 
 
 async def _prepare_ocr_reference(file_id: str) -> Optional[str]:
@@ -442,24 +413,77 @@ def _encode_png(image: Image.Image) -> bytes:
 
 
 def _compress_image_to_png(image: Image.Image, max_bytes: int) -> tuple[Image.Image, bytes]:
-    png_bytes = _encode_png(image)
-    if len(png_bytes) <= max_bytes:
+    # 策略：优先降低颜色数量（量化），因为手写/截图对色彩要求不高，且 P 模式能大幅减小体积。
+    # 随后再考虑降低分辨率。
+
+    def _check(img: Image.Image) -> tuple[bool, bytes]:
+        data = _encode_png(img)
+        return len(data) <= max_bytes, data
+
+    # 1. 尝试原始编码
+    ok, png_bytes = _check(image)
+    if ok:
         return image, png_bytes
+    
+    candidates = [(len(png_bytes), image, png_bytes)]
 
-    width, height = image.size
-    # Progressively downscale until the payload fits under max_bytes
-    while len(png_bytes) > max_bytes and min(width, height) > 64:
-        width = max(64, int(width * 0.8))
-        height = max(64, int(height * 0.8))
-        image = image.resize((width, height), Image.LANCZOS)
-        png_bytes = _encode_png(image)
+    # 2. 尝试量化到 256 色
+    # 注意：如果原图已经是 P 模式，这一步跳过或直接复用
+    current_best_image = image
+    if image.mode != 'P':
+        try:
+            # method=2 (Fast Octree) 速度快效果好
+            q_image = image.quantize(colors=256, method=2)
+            ok, png_bytes = _check(q_image)
+            if ok:
+                return q_image, png_bytes
+            candidates.append((len(png_bytes), q_image, png_bytes))
+            current_best_image = q_image
+        except Exception:
+            pass
+    else:
+        current_best_image = image
 
-    # Final attempt: drop alpha channel if still large
-    if len(png_bytes) > max_bytes and image.mode == "RGBA":
-        image = image.convert("RGB")
-        png_bytes = _encode_png(image)
+    # 准备缩放源（保持为 RGB/RGBA 以获得较好的 resize 质量）
+    src_image = image
+    if src_image.mode == 'P':
+        src_image = src_image.convert('RGBA' if 'transparency' in src_image.info else 'RGB')
+    elif src_image.mode not in ('RGB', 'RGBA'):
+        src_image = src_image.convert('RGB')
 
-    return image, png_bytes
+    width, height = src_image.size
+
+    # 3. 循环：缩放 -> 量化 (128色)
+    # 只要图片还没缩小到惨不忍睹（比如一边 < 128），就继续尝试
+    while min(width, height) > 128:  # 最小边限制
+        # 每次缩小 20%
+        width = int(width * 0.8)
+        height = int(height * 0.8)
+        src_image = src_image.resize((width, height), Image.LANCZOS)
+        
+        try:
+            # 缩放后，强制量化到 128 色，进一步压缩
+            q_image = src_image.quantize(colors=128, method=2)
+            ok, png_bytes = _check(q_image)
+            if ok:
+                return q_image, png_bytes
+            candidates.append((len(png_bytes), q_image, png_bytes))
+        except Exception:
+            pass
+
+    # 4. 保底尝试：转灰度 (L 模式)
+    try:
+        gray_image = src_image.convert("L")
+        ok, png_bytes = _check(gray_image)
+        if ok:
+            return gray_image, png_bytes
+        candidates.append((len(png_bytes), gray_image, png_bytes))
+    except Exception:
+        pass
+
+    # 实在不行，返回尝试过程中最小的那个
+    candidates.sort(key=lambda x: x[0])
+    return candidates[0][1], candidates[0][2]
 
 
 def _fix_orientation_if_needed(image: Image.Image, conf_thresh: float = 2.0) -> Image.Image:
@@ -506,5 +530,5 @@ __all__ = [
     "LLMConfig",
     "AutoTaskLLMClient",
     "call_structured_llm",
-    "describe_image_to_text",
+    "describe_images_to_text",
 ]

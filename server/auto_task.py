@@ -12,6 +12,7 @@ from db import (
     ProblemSubjective,
     ProblemSetAnswerSheet,
     ProblemSetAnswerSheetDetail,
+    ProblemSet,
 )
 
 router = APIRouter(prefix="/auto-task", tags=["auto-task"])
@@ -50,6 +51,7 @@ async def create_subjective_review_tasks(
     task_ids: List[str] = []
     try:
         for psid, tasks in grouped.items():
+            ps_group_id = model.session.query(ProblemSet.groupId).filter(ProblemSet.psid == psid).scalar()
             payloads = [
                 {
                     "psid": item.psid,
@@ -60,7 +62,7 @@ async def create_subjective_review_tasks(
                 }
                 for item in tasks
             ]
-            task_ids.extend(model.add_tasks("subjective_review", psid, payloads))
+            task_ids.extend(model.add_tasks("subjective_review", psid, payloads, groupId=ps_group_id))
     finally:
         model.session.close()
     return makeResponse({"taskIds": task_ids})

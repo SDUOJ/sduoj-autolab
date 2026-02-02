@@ -25,7 +25,7 @@ try:  # pragma: no cover - optional dependency
 except ImportError:  # pragma: no cover
     pypandoc = None
 
-from auto_task.llm_client import describe_image_to_text
+from auto_task.llm_client import describe_images_to_text
 from sduojApi import downloadFile, uploadFiles
 
 IMAGE_PLACEHOLDER = "[[IMAGE:{}]]"
@@ -285,13 +285,12 @@ async def _embed_images(base_text: str, images: Sequence[ImageResource], user_id
         return base_text
     
     print(f"找到{len(file_indices)}张图片需要描述，开始调用 LLM 进行描述...")
-    descriptions = await asyncio.gather(
-        *[describe_image_to_text(images[idx].file_id, task_id=task_id) for idx in file_indices]
-    )
+    
+    target_file_ids = [images[idx].file_id for idx in file_indices]
+    descriptions = await describe_images_to_text(target_file_ids, task_id=task_id)
 
     markdown = base_text
     for order, idx in enumerate(file_indices):
-        fid = images[idx].file_id
         desc = descriptions[order]
         replacement = desc.strip() + "\n"
         markdown = markdown.replace(IMAGE_PLACEHOLDER.format(idx), replacement, 1)
