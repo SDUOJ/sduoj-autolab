@@ -5,6 +5,14 @@ from starlette.responses import JSONResponse
 from utilsTime import getMsTime
 
 
+class Result:
+    """统一返回结果类"""
+    def __init__(self, code: int, msg: str, data=None):
+        self.code = code
+        self.msg = msg
+        self.data = data
+
+
 def removeNone(d: dict):
     ls = []
     for x in d:

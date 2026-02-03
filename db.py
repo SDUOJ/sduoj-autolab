@@ -330,16 +330,79 @@ class ojClass(Base):
     # 座位数量
     c_seat_num = Column(INTEGER, nullable=False)
 
-    # 教室描述
-    c_description = Column(LONGTEXT, nullable=False)
-
-    # 教室是否可用，0不可用1可用
-    c_is_available = Column(TINYINT, nullable=False)
-
     # 区分物理地址(哪个楼上)
     address = Column(VARCHAR(50), nullable=False)
 
+    # 扩展配置 JSON，存储禁用座位等信息
+    # {"seat-ban": [{"seat_number": 5, "reason": "座位损坏"}]}
+    ext_config = Column(LONGTEXT, nullable=True)
 
+
+class ojCourse(Base):
+    # 课程表：系统核心表，记录课程信息
+    __tablename__ = 'oj_course'
+
+    # 课程ID
+    course_id = Column(BIGINT, primary_key=True, nullable=False, autoincrement=True)
+
+    # 课程名称
+    course_name = Column(VARCHAR(100), nullable=False)
+
+    # 用户组ID
+    group_id = Column(BIGINT, nullable=False, index=True)
+
+    # 课程标签（授课/实验/考试/答疑）
+    tag = Column(VARCHAR(20), nullable=False)
+
+    # 教室ID列表 JSON，存储教室ID数组 [1, 2, 3]
+    c_ids = Column(LONGTEXT, nullable=True)
+
+    # 创建时间
+    create_time = Column(DATETIME, nullable=False, server_default=func.now())
+
+    # 扩展配置 JSON
+    # {"description": "", "semester": "", "auto_assign_seat": true, "auto_create_checkin": true}
+    ext_config = Column(LONGTEXT, nullable=True)
+
+
+class ojCourseSchedule(Base):
+    # 课程时间表：记录每次上课安排
+    __tablename__ = 'oj_course_schedule'
+
+    # 课程时间ID
+    schedule_id = Column(BIGINT, primary_key=True, nullable=False, autoincrement=True)
+
+    # 课程ID
+    course_id = Column(BIGINT, ForeignKey("oj_course.course_id"), nullable=False, index=True)
+
+    # 课程序号
+    sequence = Column(INTEGER, nullable=False)
+
+    # 课程开始时间
+    start_time = Column(DATETIME, nullable=False)
+
+    # 课程结束时间
+    end_time = Column(DATETIME, nullable=False)
+
+    # 课程内容
+    course_content = Column(LONGTEXT, nullable=True)
+
+    # 课程资料 JSON
+    # {"slides": ["file_id_1"], "codes": ["file_id_2"], "references": ["file_id_3"]}
+    course_materials = Column(LONGTEXT, nullable=True)
+
+    # 课程作业
+    course_homework = Column(LONGTEXT, nullable=True)
+
+    # 签到ID，关联到考勤表
+    sg_id = Column(INTEGER, ForeignKey("oj_sign.sg_id"), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("course_id", "sequence", name="un_course_schedule_course_id_sequence"),
+    )
+
+
+# 已废弃：使用 ojCourse 和 ojClassUser 替代
 class ojSeat(Base):
     # 座位信息表：用于记录所有的座位信息
     __tablename__ = 'oj_seat'
@@ -375,24 +438,31 @@ class ojUserSeatList(Base):
 
 
 class ojClassUser(Base):
-    # 教室座位绑定表，用于记录教室用户的绑定信息
+    # 课程用户座位绑定表，记录学生在课程中的座位分配信息
     __tablename__ = 'oj_class_user'
 
     # id,主键
-    id = Column(BIGINT, primary_key=True, nullable=False, unique=True, index=True)
+    id = Column(BIGINT, primary_key=True, nullable=False, unique=True, index=True, autoincrement=True)
 
-    # usl_id,外键
-    usl_id = Column(BIGINT, ForeignKey("oj_user_seat_list.usl_id"), nullable=False)
+    # 课程ID
+    course_id = Column(BIGINT, ForeignKey("oj_course.course_id"), nullable=False, index=True)
 
     # 用户名(学号)
     username = Column(VARCHAR(50), nullable=False, index=True)
 
-    # 座位id,外键,唯一标识,允许级联删除,可空
-    s_id = Column(BIGINT, ForeignKey("oj_seat.s_id", ondelete='CASCADE'), nullable=True)
+    # 教室ID
+    c_id = Column(INTEGER, ForeignKey("oj_class.c_id"), nullable=True)
+
+    # 座位号
+    seat_number = Column(TINYINT, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("course_id", "username", name="un_class_user_course_id_username"),
+    )
 
 
 class ojClassManageUser(Base):
-    # 教室助教绑定表，用于记录教室助教的绑定信息
+    # 课程助教绑定表，记录课程助教的分配情况
     __tablename__ = 'oj_class_manage_user'
 
     # 助教id,主键
@@ -401,11 +471,12 @@ class ojClassManageUser(Base):
     # 助教姓名
     TA_name = Column(VARCHAR(20), nullable=False)
 
-    # 学生座位名单id,外键
-    usl_id = Column(BIGINT, ForeignKey("oj_user_seat_list.usl_id"), nullable=False)
+    # 课程ID
+    course_id = Column(BIGINT, ForeignKey("oj_course.course_id"), nullable=False, index=True)
 
-    # 教室id,外键
-    c_id = Column(INTEGER, ForeignKey("oj_class.c_id"), nullable=False)
+    # 扩展信息 JSON
+    # {"contact": "", "email": "", "office": "", "remark": ""}
+    ext_info = Column(LONGTEXT, nullable=True)
 
 
 class ScreenRecord(Base):
@@ -435,79 +506,67 @@ class ScreenRecord(Base):
 
 class ojSign(Base):
     __tablename__ = "oj_sign"
-    sg_id = Column(INTEGER, primary_key=True, autoincrement=True, comment="签到id")
+    sg_id = Column(INTEGER, primary_key=True, autoincrement=True, comment="考勤id")
 
-    # 签到模式
-    mode = Column(INTEGER, nullable=False, comment="签到模式")
+    # 课程ID
+    course_id = Column(BIGINT, ForeignKey("oj_course.course_id"), nullable=False, index=True, comment="课程Id")
 
-    # 用户组id
-    group_id = Column(INTEGER, nullable=False, comment="用户组Id")
+    # 课程时间ID，唯一约束，一节课只能有一个考勤记录
+    schedule_id = Column(BIGINT, ForeignKey("oj_course_schedule.schedule_id"), nullable=False, unique=True, index=True, comment="课程时间Id")
 
-    # 管理组id
-    m_group_id = Column(INTEGER, nullable=False, comment="管理组id")
+    # 考勤标题
+    title = Column(VARCHAR(63), nullable=False, comment="考勤标题")
+
+    # 考勤模式: 0-手动记录, 1-二维码签到
+    mode = Column(INTEGER, nullable=False, comment="考勤模式")
 
     # 创造时间
     u_gmt_create = Column(DATETIME, nullable=False, server_default=func.now(), comment="创建时间")
 
     # 修改时间
-    u_gmt_modified = Column(DATETIME, nullable=False, comment="最后修改时间")
+    u_gmt_modified = Column(DATETIME, nullable=False, server_default=func.now(), onupdate=func.now(), comment="最后修改时间")
 
-    # 签到标签
-    title = Column(VARCHAR(63), nullable=False, comment="签到标签")
-
-    # 开始时间
-    gmtStart = Column(DATETIME, nullable=False, comment="签到开始时间")
-
-    # 结束时间
-    gmtEnd = Column(DATETIME, nullable=False, comment="签到结束时间")
-
-    # 是否指定座位
-    # 1 绑定  0 未绑定
-    seat_bind = Column(INTEGER, nullable=False, comment="是否绑定座位：1 绑定  0 未绑定")
-
-    # 名单id
-    usl_id = Column(INTEGER, nullable=True, comment="名单id")
-
-    #是否已被删除
+    # 是否已被删除
     sign_is_deleted = Column(INTEGER, default=0, comment="是否已被删除：0 否  1 是")
 
-# 用户签到表
+# 用户考勤表
 class ojSignUser(Base):
     __tablename__ = "oj_sign_user"
-    # 学生签到id
-    sg_u_id = Column(INTEGER, primary_key=True, autoincrement=True, comment="学生签到id")
-
-    # 座位号
-    seat_id = Column(INTEGER, comment="座位号")
+    # 学生考勤id
+    sg_u_id = Column(INTEGER, primary_key=True, autoincrement=True, comment="学生考勤id")
 
     # 学生用户名
     username = Column(VARCHAR(63), nullable=False, comment="学生用户名")
 
-    # 签到id
-    sg_id = Column(INTEGER, ForeignKey("oj_sign.sg_id"), nullable=False, index=True, comment="签到id")
+    # 考勤id
+    sg_id = Column(INTEGER, ForeignKey("oj_sign.sg_id"), nullable=False, index=True, comment="考勤id")
+
+    # 考勤状态: 0-无记录, 1-出勤, 2-缺勤, 3-迟到/早退, 4-请假(已批准), 5-请假申请中
+    status = Column(INTEGER, nullable=False, default=0, comment="考勤状态")
 
     # 签到时间
     sg_time = Column(DATETIME, nullable=True, comment="签到时间")
 
+    # 座位号
+    seat_number = Column(TINYINT, nullable=True, comment="座位号")
+
     # 签到唯一凭证
     token = Column(VARCHAR(63), nullable=True, unique=True, comment="签到唯一凭证")
 
-    # 请假信息
-    sg_user_message = Column(LONGTEXT, nullable=True, comment="请假信息")
+    # 请假文件列表 JSON，存储 SDUOJ 文件ID数组
+    leave_files = Column(LONGTEXT, nullable=True, comment="请假文件列表")
 
-    # 是否通过审批
-    # 1 通过  0 未通过  none 审批中  2 无请假
-    sg_absence_pass = Column(INTEGER, nullable=True, comment="审批信息：1 通过  0 未通过  none 审批中")
+    # 请假说明
+    leave_message = Column(LONGTEXT, nullable=True, comment="请假信息")
 
-    #登录ip地址
-    ip = Column(VARCHAR(63), nullable=True, unique=True, comment="登录ip地址")
+    # 请假审批状态: NULL-未提交, 0-申请中, 1-批准, 2-拒绝
+    leave_status = Column(INTEGER, nullable=True, comment="审批信息：NULL-未提交, 0-申请中, 1-批准, 2-拒绝")
 
-    #是否已经被删除
+    # 是否已经被删除
     is_deleted = Column(INTEGER, nullable=True, comment="是否被删除")
 
-    # 让sg_id  username  seat_id 联合唯一
-    _table_aegs_ = (
-        UniqueConstraint("sg_id", "username", "seat_id", name="u_id_seat"),
+    __table_args__ = (
+        UniqueConstraint("sg_id", "username", name="un_sign_user_sg_id_username"),
     )
 
 

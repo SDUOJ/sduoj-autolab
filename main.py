@@ -7,7 +7,8 @@ from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 
 from server import answer_sheet, objective, \
-    problem_set, problem_group, subjective, subjective_judge, summary, screen_record, sign_in_record, class_binding, test, problem_set_late, auto_task
+    problem_set, problem_group, subjective, subjective_judge, summary, screen_record, test, problem_set_late, auto_task, \
+    course, course_schedule, seat_binding, attendance
 from utilsTime import getMsTime
 from auto_task import start_background_worker
 
@@ -22,10 +23,14 @@ app.include_router(subjective.router)
 app.include_router(subjective_judge.router)
 app.include_router(summary.router)
 app.include_router(screen_record.router)
-app.include_router(sign_in_record.router)
-app.include_router(class_binding.router)
 app.include_router(test.router)
 app.include_router(auto_task.router)
+
+# v3.0 新增路由
+app.include_router(course.router)
+app.include_router(course_schedule.router)
+app.include_router(seat_binding.router)
+app.include_router(attendance.router)
 
 # 已移除全局 CORS 中间件，避免自动添加 Access-Control-Allow-Origin 头。
 

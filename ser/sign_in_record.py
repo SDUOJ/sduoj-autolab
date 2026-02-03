@@ -1,170 +1,81 @@
+"""
+考勤序列化模型
+定义考勤相关API的请求和响应模型
+"""
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field
 from datetime import datetime
-from http.client import HTTPException
-from typing import List, Optional, Union
-from pydantic import BaseModel
-from sqlalchemy.orm import session
-from db import ojClass, dbSession,ojSeat
-
-import os
-import uuid
 
 
-# 学生签到信息
-class signInType(BaseModel):
-    username: str
-    sg_id: int
-    ip: str = None
-    sg_user_message: str = None
+# 签到/签退请求
+class SignInRequest(BaseModel):
+    username: str = Field(..., description="学生用户名")
+    sign_type: int = Field(..., description="签到类型: 0-签到, 1-签退")
 
 
-class signType(BaseModel):
-    #签到信息
-    mode: int
-    group_id: int
-    m_group_id: int
-    title: str
-    gmtStart: float = 0
-    gmtEnd: float = 0
-    seat_bind: int
-    usl_id: int = None
+# 请假申请请求
+class LeaveRequest(BaseModel):
+    leave_message: str = Field(..., description="请假理由")
+    leave_files: Optional[List[str]] = Field(None, description="请假附件（文件ID列表）")
 
 
-class userSignIn(BaseModel):
-    username: str
+# 请假审批请求
+class LeaveReviewRequest(BaseModel):
+    username: str = Field(..., description="学生用户名")
+    approved: bool = Field(..., description="是否批准")
 
 
-class signEditType(BaseModel):
-    mode: int = None
-    group_id: int = None
-    m_group_id: int = None
-    title: str = None
-    gmtStart: float = None
-    gmtEnd: float = None
-    seat_bind: int = None
+# 考勤模式更新请求
+class SignModeUpdateRequest(BaseModel):
+    sign_mode: int = Field(..., description="考勤模式: 0-签到+签退, 1-仅签到")
 
 
-class submitLeaveInfoType(BaseModel):
-    # 用户提交的请假信息
-    sg_u_id: int
-    sg_user_message: str
+# 批量考勤记录项
+class AttendanceRecordItem(BaseModel):
+    username: str = Field(..., description="学生用户名")
+    status: int = Field(..., description="状态: 0-无记录, 1-出勤, 2-缺勤, 3-迟到/早退, 4-请假已批准, 5-请假申请中")
+    seat_number: Optional[int] = Field(None, description="座位号")
 
 
-class checkLeaveInfoType(BaseModel):
-    # 审批用户提交的请假信息
-    sg_u_id: int
-    sg_absence_pass: int = None
+# 批量考勤记录请求
+class AttendanceRecordRequest(BaseModel):
+    records: List[AttendanceRecordItem] = Field(..., description="考勤记录列表")
 
 
-class usermess(BaseModel):
-    username: str
-    sg_id: str
+# 二维码 token 请求
+class TokenRequest(BaseModel):
+    username: str = Field(..., description="学生用户名")
 
 
-class SignInData(BaseModel):
-    token: str
-    c_id: int
-    s_number: int
+# 二维码 token 校验请求
+class TokenVerifyRequest(BaseModel):
+    token: str = Field(..., description="签到 token")
+    seat_number: Optional[int] = Field(None, description="座位号")
 
 
-class pageType(BaseModel):
-    pageNow: int
-    pageSize: int
+# 考勤学生记录
+class AttendanceStudentRecord(BaseModel):
+    username: str = Field(..., description="学生用户名")
+    status: int = Field(..., description="状态: 0-无记录, 1-出勤, 2-缺勤, 3-迟到/早退, 4-请假已批准, 5-请假申请中")
+    seat_number: Optional[int] = Field(None, description="座位号")
+    check_in_time: Optional[str] = Field(None, description="签到时间")
+    check_out_time: Optional[str] = Field(None, description="签退时间")
+    leave_message: Optional[str] = Field(None, description="请假理由")
+    leave_files: Optional[List[str]] = Field(None, description="请假附件")
+    leave_status: Optional[int] = Field(None, description="请假状态: NULL/0-申请中, 1-批准, 2-拒绝")
 
 
-def sign_create(data: signType):
-    Now = datetime.now()
-    gmtStart = convert_time(data.gmtStart / 1000.0)
-    gmtStart = gmtStart["strdate"]
-    gmtEnd = convert_time(data.gmtEnd / 1000.0)
-    gmtEnd = gmtEnd["strdate"]
-    data={
-        "mode": data.mode,
-        "group_id": data.group_id,
-        "m_group_id": data.m_group_id,
-        "u_gmt_create": Now,
-        "u_gmt_modified": Now,
-        "title": data.title,
-        "gmtStart": gmtStart,
-        "gmtEnd": gmtEnd,
-        "seat_bind": data.seat_bind,
-        "usl_id": data.usl_id
-    }
-    return data
+# 考勤列表响应
+class AttendanceListResponse(BaseModel):
+    sg_id: int = Field(..., description="考勤ID")
+    course_id: int = Field(..., description="课程ID")
+    schedule_id: int = Field(..., description="课程时间ID")
+    sign_mode: int = Field(..., description="考勤模式")
+    course_time: Dict[str, Optional[str]] = Field(..., description="课程时间")
+    students: List[AttendanceStudentRecord] = Field(..., description="学生列表")
+    statistics: Dict[str, int] = Field(..., description="统计信息")
 
 
-def sign_edit(data: signEditType):
-    Now = datetime.now()
-    gmtStart = gmtEnd = None
-
-    if data.gmtStart is not None:
-        gmtStart = convert_time(data.gmtStart / 1000.0)
-        gmtStart = gmtStart["date"]
-
-    if data.gmtEnd is not None:
-        gmtEnd = convert_time(data.gmtEnd / 1000.0)
-        gmtEnd = gmtEnd["date"]
-    data = {
-        "mode": data.mode,
-        "group_id": data.m_group_id,
-        "m_group_id": data.m_group_id,
-        "title": data.title,
-        "gmtStart": gmtStart,
-        "gmtEnd": gmtEnd,
-        "u_gmt_modified": Now,
-        "seat_bind": data.seat_bind,
-    }
-    return data
-
-
-def checkIn(data: signInType):
-    Now = datetime.now()
-    Token = uuid.uuid4().hex
-    sg_absence_pass = None
-    #处理请假信息  # 1 通过  none 审批中  2 不通过
-    #if data.sg_user_message is None:
-    #    return None
-    data = {
-        "username": data.username,
-        "sg_id": data.sg_id,
-        "sg_time": Now,
-        "ip": data.ip,
-        "token": Token,
-        "sg_user_message": data.sg_user_message,
-        "sg_absence_pass": sg_absence_pass
-    }
-    return data
-
-
-def get_page(data: pageType):
-    data = {
-    "pageSize": data.pageSize,
-    "pageNow": data.pageNow
-    }
-    return data
-
-
-def checktoken(data: usermess):
-    data = {
-        "username": data.username,
-        "sg_id": data.sg_id,
-        "token": ""
-    }
-    return data
-
-
-def scanIn(data: SignInData):
-    Now = datetime.now()
-    data = {
-        "sg_time": Now,
-        "token": data.token,
-        "c_id": data.c_id,
-        "s_number": data.s_number
-    }
-    return data
-
-
-def convert_time(item: float):
-    date_time = datetime.fromtimestamp(item)
-    format_time = date_time.strftime('%Y-%m-%d %H:%M:%S')
-    return {"date": date_time, "strdate": format_time}
-
+# 初始化考勤请求
+class InitAttendanceRequest(BaseModel):
+    group_id: int = Field(..., description="用户组ID")
