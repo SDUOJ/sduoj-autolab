@@ -40,6 +40,11 @@ class searchKey(BaseModel):
     search: str
 
 
+class problem_group_list_page(page):
+    searchKey: Optional[str] = None
+    title: Optional[str] = None
+
+
 def ser_group_add(data: problem_group, SDUOJUserInfo=Depends(cover_header)):
     return base_add(data, SDUOJUserInfo)
 
@@ -49,8 +54,14 @@ def ser_group_edit(data: problem_group_edit,
     return group_base_edit(data, SDUOJUserInfo)
 
 
-def ser_group_list(data: page, SDUOJUserInfo=Depends(cover_header)):
-    return base_page(data, SDUOJUserInfo)
+def ser_group_list(data: problem_group_list_page,
+                   SDUOJUserInfo=Depends(cover_header)):
+    data_dict = base_page(data, SDUOJUserInfo)
+    key = data.searchKey if data.searchKey is not None else data.title
+    if isinstance(key, str):
+        key = key.strip()
+    data_dict["titleKeyword"] = key
+    return data_dict
 
 
 def ser_group_info(data: problem_group_id,

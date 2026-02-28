@@ -31,7 +31,8 @@ class groupModel(dbSession):
             ProblemGroup.gid == gid).update(data)
         self.session.commit()
 
-    def group_get_list_info_by_page(self, pg: page, username, groups):
+    def group_get_list_info_by_page(self, pg: page, username, groups,
+                                    title_keyword=None):
         if username != "superadmin":
             cmd = self.session.query(ProblemGroup).filter(
                 or_(ProblemGroup.manageGroupId.in_(groups),
@@ -39,6 +40,8 @@ class groupModel(dbSession):
             )
         else:
             cmd = self.session.query(ProblemGroup)
+        if isinstance(title_keyword, str) and title_keyword.strip() != "":
+            cmd = cmd.filter(ProblemGroup.name.like(f"%{title_keyword.strip()}%"))
         tn = cmd.count()
         data = cmd.offset(pg.offset()).limit(pg.limit())
         return tn, self.dealDataList(data, ["create_time"], ["problemInfo"])

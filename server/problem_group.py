@@ -31,7 +31,7 @@ async def edit(data: dict = Depends(ser_group_edit)):
 async def list(data: dict = Depends(ser_group_list)):
     db = groupModel()
     tn, res = db.group_get_list_info_by_page(
-        data["page"], data["username"], data["groups"]
+        data["page"], data["username"], data["groups"], data.get("titleKeyword")
     )
     return makeResponse(makePageResult(data["page"], tn, res))
 
