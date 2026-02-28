@@ -79,3 +79,32 @@ class AttendanceListResponse(BaseModel):
 # 初始化考勤请求
 class InitAttendanceRequest(BaseModel):
     group_id: int = Field(..., description="用户组ID")
+
+
+class StudentAttendanceRecord(BaseModel):
+    sg_u_id: int = Field(..., description="学生考勤记录ID")
+    sg_id: int = Field(..., description="考勤ID")
+    course_id: int = Field(..., description="课程ID")
+    course_name: str = Field(..., description="课程名称")
+    course_tag: str = Field(..., description="课程标签")
+    schedule_id: int = Field(..., description="课程时间ID")
+    sequence: Optional[int] = Field(None, description="课程序号")
+    start_time: Optional[str] = Field(None, description="开始时间")
+    end_time: Optional[str] = Field(None, description="结束时间")
+    status: int = Field(..., description="考勤状态")
+    leave_status: Optional[int] = Field(None, description="请假审批状态")
+    seat_number: Optional[int] = Field(None, description="座位号")
+    check_in_time: Optional[str] = Field(None, description="签到时间")
+    leave_message: Optional[str] = Field(None, description="请假理由")
+    leave_files: Optional[List[str]] = Field(None, description="请假附件")
+    attendance_tag: str = Field(..., description="前端tab标签: future/signed/absent/leave_approved")
+    color_tag: str = Field(..., description="前端颜色标签: gray/green/red/light_green")
+
+
+class StudentAttendanceRecordsResponse(BaseModel):
+    username: str = Field(..., description="学生用户名")
+    total: int = Field(..., description="总数")
+    page_now: int = Field(..., description="当前页码")
+    page_size: int = Field(..., description="每页数量")
+    statistics: Dict[str, int] = Field(..., description="按attendance_tag统计")
+    records: List[StudentAttendanceRecord] = Field(..., description="记录列表")

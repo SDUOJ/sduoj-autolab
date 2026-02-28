@@ -1,6 +1,11 @@
 from datetime import datetime
+from functools import wraps
+from inspect import isawaitable
+from types import SimpleNamespace
+from typing import Any, Optional
 
 from starlette.responses import JSONResponse
+from starlette.responses import Response
 
 from utilsTime import getMsTime
 
@@ -30,6 +35,72 @@ def makeResponse(data):
         "timestamp": getMsTime(datetime.now())
     }, status_code=200)
     return response
+
+
+def _try_make_page_result(data: Any, rows_key: Optional[str] = None):
+    """
+    统一分页结构：
+    1) 已是 pageIndex/pageSize/totalNum/rows，原样返回
+    2) 兼容 total/page_now/page_size/courses|schedules|records 等，补齐 pageResult 字段
+    3) 保留原字段，避免影响旧前端
+    """
+    if not isinstance(data, dict):
+        return data
+
+    # 已经是标准分页结构
+    if {"pageIndex", "pageSize", "totalNum", "rows"}.issubset(data.keys()):
+        return data
+
+    page_now = data.get("page_now", data.get("pageNow", data.get("pageIndex")))
+    page_size = data.get("page_size", data.get("pageSize"))
+    total = data.get("total", data.get("totalNum"))
+
+    resolved_rows_key = rows_key
+    if resolved_rows_key is None:
+        for key in ("rows", "courses", "schedules", "records", "items", "list"):
+            if key in data and isinstance(data.get(key), list):
+                resolved_rows_key = key
+                break
+
+    rows = data.get(resolved_rows_key) if resolved_rows_key else None
+    if page_now is None or page_size is None or total is None or rows is None:
+        return data
+
+    from ser.base import makePageResult
+
+    page_data = makePageResult(
+        SimpleNamespace(pageNow=int(page_now), pageSize=int(page_size)),
+        int(total),
+        rows
+    )
+
+    merged = dict(data)
+    merged.update(page_data)
+    return merged
+
+
+def api_response(paged: bool = False, rows_key: Optional[str] = None):
+    """
+    路由统一返回修饰器：
+    - 自动包装 makeResponse
+    - paged=True 时自动补齐 makePageResult 结构（同时保留原字段）
+    """
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            result = func(*args, **kwargs)
+            if isawaitable(result):
+                result = await result
+
+            if isinstance(result, Response):
+                return result
+
+            payload = _try_make_page_result(result, rows_key=rows_key) if paged else result
+            return makeResponse(payload)
+
+        return wrapper
+
+    return decorator
 
 
 def get_next(seed):

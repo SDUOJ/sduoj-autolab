@@ -360,6 +360,12 @@ class ojCourse(Base):
     # 创建时间
     create_time = Column(DATETIME, nullable=False, server_default=func.now())
 
+    # 课程创建人用户名
+    creator_username = Column(VARCHAR(100), nullable=True, index=True)
+
+    # 课程管理组ID列表 JSON，存储组ID数组 [1, 2, 3]
+    manager_groups = Column(LONGTEXT, nullable=True)
+
     # 扩展配置 JSON
     # {"description": "", "semester": "", "auto_assign_seat": true, "auto_create_checkin": true}
     ext_config = Column(LONGTEXT, nullable=True)

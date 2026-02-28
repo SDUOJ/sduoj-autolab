@@ -161,6 +161,10 @@ def cover_header(SDUOJUserInfo=Header(None)):
         raise HTTPException(detail="Permission Denial", status_code=403)
 
 
+def tokenTool(SDUOJUserInfo: str = Header(None)):
+    return cover_header(SDUOJUserInfo)
+
+
 def parse_header(SDUOJUserInfo):
     try:
         return parse.quote(json.dumps(SDUOJUserInfo))

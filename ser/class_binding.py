@@ -16,7 +16,8 @@ class SeatAssignRequest(BaseModel):
 # 自动分配座位请求
 class AutoAssignRequest(BaseModel):
     course_id: int = Field(..., description="课程ID")
-    group_id: int = Field(..., description="用户组ID")
+    usernames: Optional[List[str]] = Field(None, description="需要分配座位的用户名列表")
+    c_ids: Optional[List[int]] = Field(None, description="参与分配的教室ID列表")
 
 
 # 座位响应

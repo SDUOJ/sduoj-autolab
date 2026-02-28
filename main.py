@@ -8,7 +8,7 @@ from starlette.responses import JSONResponse
 
 from server import answer_sheet, objective, \
     problem_set, problem_group, subjective, subjective_judge, summary, screen_record, test, problem_set_late, auto_task, \
-    course, course_schedule, seat_binding, attendance
+    course, course_schedule, seat_binding, attendance, classroom
 from utilsTime import getMsTime
 from auto_task import start_background_worker
 
@@ -31,8 +31,33 @@ app.include_router(course.router)
 app.include_router(course_schedule.router)
 app.include_router(seat_binding.router)
 app.include_router(attendance.router)
+app.include_router(classroom.router)
 
 # 已移除全局 CORS 中间件，避免自动添加 Access-Control-Allow-Origin 头。
+
+
+def _assert_http_method_policy() -> None:
+    """
+    统一方法约束：仅允许 GET/POST（以及 GET 自动附带的 HEAD）。
+    """
+    allowed_methods = {"GET", "POST", "HEAD"}
+    violations = []
+    for route in app.routes:
+        methods = getattr(route, "methods", None)
+        if not methods:
+            continue
+        invalid = set(methods) - allowed_methods
+        if invalid:
+            path = getattr(route, "path", str(route))
+            violations.append(f"{path}: {sorted(invalid)}")
+    if violations:
+        raise RuntimeError(
+            "HTTP method policy violation: only GET/POST are allowed.\n"
+            + "\n".join(violations)
+        )
+
+
+_assert_http_method_policy()
 
 
 @app.exception_handler(HTTPException)  # 自定义HttpRequest 请求异常

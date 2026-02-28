@@ -18,6 +18,30 @@ class AttendanceModel:
     """考勤管理业务逻辑"""
 
     @staticmethod
+    def get_sign_course_id(sg_id: int) -> Result:
+        """
+        根据考勤ID获取所属课程ID
+
+        Args:
+            sg_id: 考勤ID
+
+        Returns:
+            Result: 成功时 data={"course_id": int}
+        """
+        session = dbSession()
+        try:
+            sign = session.session.query(ojSign).filter(
+                ojSign.sg_id == sg_id
+            ).first()
+            if not sign:
+                return Result(code=1, msg="考勤不存在")
+            return Result(code=0, msg="success", data={"course_id": int(sign.course_id)})
+        except Exception as e:
+            return Result(code=1, msg=f"查询考勤所属课程失败: {str(e)}")
+        finally:
+            del session
+
+    @staticmethod
     def get_or_create_sign(course_id: int, schedule_id: int) -> Result:
         """
         获取或创建考勤记录
@@ -593,5 +617,135 @@ class AttendanceModel:
         except Exception as e:
             session.session.rollback()
             return Result(code=1, msg=f"标记缺勤失败: {str(e)}")
+        finally:
+            del session
+
+    @staticmethod
+    def get_student_records(
+        username: str,
+        user_groups: Optional[List[int]] = None,
+        course_id: Optional[int] = None,
+        attendance_tag: Optional[str] = None,
+        page_now: int = 1,
+        page_size: int = 20
+    ) -> Result:
+        """
+        获取学生全部考勤记录（用户端视图）
+
+        attendance_tag:
+        - future: 未发生（灰色）
+        - signed: 已签到（绿色）
+        - absent: 缺勤/审批中/其他未通过（红色）
+        - leave_approved: 请假通过（浅绿色）
+        """
+        session = dbSession()
+        try:
+            if not username:
+                return Result(code=1, msg="用户名不能为空")
+
+            query = session.session.query(ojSignUser).filter(
+                ojSignUser.username == username
+            )
+            sign_users = query.all()
+
+            now = datetime.now()
+            records = []
+            statistics = {
+                "future": 0,
+                "signed": 0,
+                "absent": 0,
+                "leave_approved": 0
+            }
+            allowed_groups = {int(g) for g in (user_groups or [])}
+
+            for su in sign_users:
+                sign = session.session.query(ojSign).filter(
+                    ojSign.sg_id == su.sg_id
+                ).first()
+                if not sign:
+                    continue
+
+                schedule = session.session.query(ojCourseSchedule).filter(
+                    ojCourseSchedule.schedule_id == sign.schedule_id
+                ).first()
+                if not schedule:
+                    continue
+
+                course = session.session.query(ojCourse).filter(
+                    ojCourse.course_id == sign.course_id
+                ).first()
+                if not course:
+                    continue
+
+                if allowed_groups and int(course.group_id) not in allowed_groups:
+                    continue
+                if course_id is not None and int(course.course_id) != int(course_id):
+                    continue
+
+                if schedule.start_time and now < schedule.start_time:
+                    tag = "future"
+                    color_tag = "gray"
+                elif su.status == 1:
+                    tag = "signed"
+                    color_tag = "green"
+                elif su.status == 4:
+                    tag = "leave_approved"
+                    color_tag = "light_green"
+                else:
+                    tag = "absent"
+                    color_tag = "red"
+
+                statistics[tag] += 1
+
+                if attendance_tag and attendance_tag != tag:
+                    continue
+
+                leave_files = None
+                if su.leave_files:
+                    try:
+                        leave_files = json.loads(su.leave_files)
+                    except Exception:
+                        leave_files = None
+
+                records.append({
+                    "sg_u_id": su.sg_u_id,
+                    "sg_id": su.sg_id,
+                    "course_id": course.course_id,
+                    "course_name": course.course_name,
+                    "course_tag": course.tag,
+                    "schedule_id": schedule.schedule_id,
+                    "sequence": schedule.sequence,
+                    "start_time": schedule.start_time.isoformat() if schedule.start_time else None,
+                    "end_time": schedule.end_time.isoformat() if schedule.end_time else None,
+                    "status": su.status,
+                    "leave_status": su.leave_status,
+                    "seat_number": su.seat_number,
+                    "check_in_time": su.sg_time.isoformat() if su.sg_time else None,
+                    "leave_message": su.leave_message,
+                    "leave_files": leave_files,
+                    "attendance_tag": tag,
+                    "color_tag": color_tag
+                })
+
+            records.sort(
+                key=lambda x: (x["start_time"] or ""),
+                reverse=True
+            )
+
+            total = len(records)
+            start = (page_now - 1) * page_size
+            end = start + page_size
+            page_records = records[start:end]
+
+            return Result(code=0, msg="success", data={
+                "username": username,
+                "total": total,
+                "page_now": page_now,
+                "page_size": page_size,
+                "statistics": statistics,
+                "records": page_records
+            })
+        except Exception as e:
+            return Result(code=1, msg=f"查询学生考勤记录失败: {str(e)}")
         finally:
             del session
