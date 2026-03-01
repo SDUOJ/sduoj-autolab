@@ -10,7 +10,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Union
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import fitz
 import requests
@@ -33,15 +33,19 @@ MD_LINK_PATTERN = re.compile(r"(!)?\[[^\]]*]\(([^)]+)\)")
 # 匹配中文括号的 markdown 图片语法（非规范写法）
 MD_LINK_CN_PATTERN = re.compile(r"(!)?\[[^\]]*]（([^）]+)）")
 HTML_IMG_PATTERN = re.compile(r'<img\s+[^>]*src="([^"]+)"[^>]*>', re.IGNORECASE)
-FILESYS_DOWNLOAD_RE = re.compile(r"/api/filesys/download/(\d+)/([^/?]+)")
+FILESYS_DOWNLOAD_RE = re.compile(r"/api/filesys/download/(\d+)(?:/([^/?#]+))?")
 # 直接匹配裸露的文件系统下载链接
-BARE_FILESYS_URL_PATTERN = re.compile(r'https?://[^/\s]+/api/filesys/download/\d+/[^\s)）]+')
+BARE_FILESYS_URL_PATTERN = re.compile(
+    r'https?://[^/\s]+/api/filesys/download/\d+(?:/[^\s)）?#]+)?(?:\?[^\s)）]+)?'
+)
+FILE_ID_LITERAL_RE = re.compile(r"^\d{15,}$")
 
 
 
 MAX_FILE_SIZE = 16 * 1024 * 1024
 MAX_RECURSIVE_DOCS = 8
 DOC_EXTENSIONS = {".md", ".markdown", ".doc", ".docx", ".pdf"}
+URL_FILENAME_QUERY_KEYS = ("filename", "fileName", "name")
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +69,7 @@ async def convert_document_to_markdown(
     if isinstance(data, bytes) and not data:
         raise ValueError("文件内容为空")
 
-    if isinstance(data, str) and not filename:
+    if isinstance(data, str) and not filename and not _is_document_reference_input(data):
         # treat pure markdown text input
         content = data
         content, images, doc_links = await _parse_markdown(content, user_id, depth)
@@ -90,13 +94,30 @@ async def convert_document_to_markdown(
 async def _load_document_bytes(data: Union[str, bytes], filename: Optional[str]) -> Tuple[bytes, str]:
     if isinstance(data, bytes):
         return data[:MAX_FILE_SIZE], filename or ""
-    # treat as file id
-    status, content, headers = await downloadFile(data)
+    source = _normalize_oj_file_url(data)
+    file_id, linked_name = _extract_file_reference(source)
+    if file_id:
+        status, content, headers = await downloadFile(file_id)
+        if status != 200:
+            raise RuntimeError(f"下载文件 {data} 失败，状态码 {status}")
+        if len(content) > MAX_FILE_SIZE:
+            raise ValueError("文件过大，超过 16MB")
+        inferred_name = filename or linked_name or _extract_filename_from_headers(headers) or _guess_filename_from_url(source)
+        return content, inferred_name
+    parsed = urlparse(source)
+    if parsed.scheme in {"http", "https"}:
+        resp = await _fetch_url(source)
+        content = resp.content
+        if len(content) > MAX_FILE_SIZE:
+            raise ValueError("文件过大，超过 16MB")
+        inferred_name = filename or _extract_filename_from_headers(dict(resp.headers)) or _guess_filename_from_url(source)
+        return content, inferred_name
+    status, content, headers = await downloadFile(source)
     if status != 200:
         raise RuntimeError(f"下载文件 {data} 失败，状态码 {status}")
     if len(content) > MAX_FILE_SIZE:
         raise ValueError("文件过大，超过 16MB")
-    inferred_name = _extract_filename_from_headers(headers)
+    inferred_name = filename or _extract_filename_from_headers(headers)
     return content, inferred_name
 
 
@@ -499,7 +520,8 @@ async def _load_external_resource(
         data = base64.b64decode(encoded)
         return "image", ImageResource(data=data)
     if url.startswith("http://") or url.startswith("https://"):
-        ext = Path(urlparse(url).path).suffix.lower()
+        guessed_name = _guess_filename_from_url(url)
+        ext = Path(guessed_name).suffix.lower()
         if ext in DOC_EXTENSIONS and not allow_document:
             raise ValueError("文档数量超限")
         resp = await _fetch_url(url)
@@ -509,14 +531,14 @@ async def _load_external_resource(
         if ext in DOC_EXTENSIONS:
             upload_res = await uploadFiles([
                 {
-                    "filename": Path(urlparse(url).path).name or "document",
+                    "filename": guessed_name or "document",
                     "content": content,
                     "content_type": resp.headers.get("Content-Type", "application/octet-stream"),
                 }
             ], user_id)
             file_id = str(upload_res[0]["id"])
             return "document", file_id
-        return "image", ImageResource(data=content, filename=Path(urlparse(url).path).name or None)
+        return "image", ImageResource(data=content, filename=guessed_name or None)
     raise ValueError("无法识别的资源来源")
 
 
@@ -572,10 +594,17 @@ async def _fetch_url(url: str) -> requests.Response:
 def _extract_file_reference(url: str) -> Tuple[Optional[str], Optional[str]]:
     url = _normalize_oj_file_url(url)
     parsed = urlparse(url)
-    path = parsed.path or url
+    path = unquote(parsed.path or url)
     match = FILESYS_DOWNLOAD_RE.search(path)
     if match:
-        return match.group(1), match.group(2)
+        file_name = match.group(2)
+        if file_name:
+            return match.group(1), unquote(file_name)
+        query = parse_qs(parsed.query)
+        for key in URL_FILENAME_QUERY_KEYS:
+            if key in query and query[key]:
+                return match.group(1), unquote(query[key][0])
+        return match.group(1), None
     query = parse_qs(parsed.query)
     for key in ("fileId", "file_id"):
         if key in query and query[key]:
@@ -584,10 +613,40 @@ def _extract_file_reference(url: str) -> Tuple[Optional[str], Optional[str]]:
 
 
 def _normalize_oj_file_url(url: str) -> str:
+    url = url.strip()
+    if (url.startswith("<") and url.endswith(">")) or (url.startswith('"') and url.endswith('"')):
+        url = url[1:-1].strip()
     if url.startswith("oj-file://"):
         file_id = url.split("oj-file://", 1)[-1]
         return f"https://oj.qd.sdu.edu.cn/api/filesys/download/{file_id}/{file_id}"
     return url
+
+
+def _guess_filename_from_url(url: str) -> str:
+    parsed = urlparse(url)
+    path_name = Path(unquote(parsed.path)).name if parsed.path else ""
+    if path_name:
+        return path_name
+    query = parse_qs(parsed.query)
+    for key in URL_FILENAME_QUERY_KEYS:
+        if key in query and query[key]:
+            return unquote(query[key][0])
+    return ""
+
+
+def _is_document_reference_input(data: str) -> bool:
+    stripped = data.strip()
+    if not stripped or "\n" in stripped or "\r" in stripped:
+        return False
+    if stripped.startswith("oj-file://"):
+        return True
+    if FILE_ID_LITERAL_RE.fullmatch(stripped):
+        return True
+    parsed = urlparse(stripped)
+    if parsed.scheme in {"http", "https"}:
+        file_id, _ = _extract_file_reference(stripped)
+        return bool(file_id)
+    return False
 
 
 def _extract_filename_from_headers(headers: dict) -> str:

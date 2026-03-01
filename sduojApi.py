@@ -1,6 +1,8 @@
 import json
 import asyncio
+import re
 from typing import Union
+from urllib.parse import parse_qs, urlparse
 
 import requests
 from fastapi_cache.decorator import cache
@@ -9,6 +11,7 @@ from cache import class_func_key_builder
 from const import SDUOJ_TOKEN, NACOS_addr, NACOS_namespace
 
 requestHeaders = {"sduoj-token": SDUOJ_TOKEN}
+FILESYS_DOWNLOAD_RE = re.compile(r"/api/filesys/download/(\d+)(?:/([^/?#]+))?")
 
 
 # @cache(expire=60)
@@ -220,22 +223,42 @@ async def getSubmissionList(problemSetId, ext, pop=True):
 
 
 async def downloadFile(fileId):
-    addr = await getService_ip_port("filesys-service")
-
-    def _request():
-        resp = requests.get(
-            "http://" + addr + "/internal/filesys/download",
-            params={"id": fileId},
-            headers=requestHeaders,
-            stream=True
-        )
-        return resp.status_code, resp.content, dict(resp.headers)
+    raw = str(fileId).strip()
+    fallback_url = None
+    internal_id = raw
+    if raw.startswith("oj-file://"):
+        raw = f"https://oj.qd.sdu.edu.cn/api/filesys/download/{raw.split('oj-file://', 1)[-1]}/{raw.split('oj-file://', 1)[-1]}"
+    if raw.startswith("http://") or raw.startswith("https://"):
+        parsed = urlparse(raw)
+        match = FILESYS_DOWNLOAD_RE.search(parsed.path or "")
+        if match:
+            internal_id = match.group(1)
+        else:
+            query = parse_qs(parsed.query)
+            internal_id = (query.get("fileId") or query.get("file_id") or [raw])[0]
+        fallback_url = raw
 
     loop = asyncio.get_running_loop()
-    status, content, headers = await loop.run_in_executor(None, _request)
-    if status == 200:
-        return status, content, headers
-    fallback_url = f"https://oj.qd.sdu.edu.cn/api/filesys/download/{fileId}/{fileId}"
+    try:
+        addr = await getService_ip_port("filesys-service")
+
+        def _request():
+            resp = requests.get(
+                "http://" + addr + "/internal/filesys/download",
+                params={"id": internal_id},
+                headers=requestHeaders,
+                stream=True
+            )
+            return resp.status_code, resp.content, dict(resp.headers)
+
+        status, content, headers = await loop.run_in_executor(None, _request)
+        if status == 200:
+            return status, content, headers
+    except Exception:
+        pass
+
+    if fallback_url is None:
+        fallback_url = f"https://oj.qd.sdu.edu.cn/api/filesys/download/{internal_id}/{internal_id}"
 
     def _fallback():
         resp = requests.get(fallback_url, stream=True)
