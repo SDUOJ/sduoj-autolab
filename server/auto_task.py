@@ -81,6 +81,7 @@ class AutoTaskListRequest(BaseModel):
     status: Optional[str] = None
     taskType: Optional[str] = None
     username: Optional[str] = None
+    scoreLe: Optional[float] = None
 
 
 @router.post("/list")
@@ -105,7 +106,8 @@ async def list_auto_tasks(
             problemId=data.problemId,
             task_type=data.taskType,
             status=data.status,
-            username=data.username
+            username=data.username,
+            score_le=data.scoreLe
         )
     finally:
         model.session.close()

@@ -188,7 +188,8 @@ class autoTaskModel(dbSession):
             problemId: Optional[int] = None,
             task_type: Optional[str] = None,
             status: Optional[str] = None,
-            username: Optional[str] = None
+            username: Optional[str] = None,
+            score_le: Optional[float] = None
     ) -> Tuple[int, List[Dict[str, Any]]]:
         query = self.session.query(AutoTaskRun)
         if psid is not None:
@@ -206,14 +207,33 @@ class autoTaskModel(dbSession):
         if username:
             query = query.filter(AutoTaskRun.username == username)
         query = query.order_by(desc(AutoTaskRun.create_time))
-        total = query.count()
-        rows = query.offset(pg.offset()).limit(pg.limit()).all()
+
+        if score_le is None:
+            total = query.count()
+            rows = query.offset(pg.offset()).limit(pg.limit()).all()
+            self._mark_timeout_rows(rows)
+            data = self.dealDataList(
+                rows,
+                ["start_time", "end_time", "create_time", "update_time"],
+            )
+            self._attach_result_scores(data)
+            return total, data
+
+        rows = query.all()
         self._mark_timeout_rows(rows)
         data = self.dealDataList(
             rows,
             ["start_time", "end_time", "create_time", "update_time"],
         )
-        return total, data
+        self._attach_result_scores(data)
+        filtered = [
+            row for row in data
+            if row.get("autoScore") is not None and float(row["autoScore"]) <= float(score_le)
+        ]
+        total = len(filtered)
+        offset = pg.offset()
+        limit = pg.limit()
+        return total, filtered[offset:offset + limit]
 
     def rerun_task(self, task_id: str) -> str:
         record = self.session.query(AutoTaskRun).filter(
@@ -447,3 +467,73 @@ class autoTaskModel(dbSession):
                     updated = True
         if updated:
             self.session.commit()
+
+    def _attach_result_scores(self, rows: List[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+        task_ids = [str(item.get("id")) for item in rows if item.get("id")]
+        if not task_ids:
+            return
+        score_map = self._build_result_score_map(task_ids)
+        for row in rows:
+            score_info = score_map.get(str(row.get("id")))
+            if score_info is None:
+                row["autoScore"] = None
+                row["autoFullScore"] = None
+                continue
+            row["autoScore"] = score_info[0]
+            row["autoFullScore"] = score_info[1]
+
+    def _build_result_score_map(self, task_ids: List[str]) -> Dict[str, Tuple[Optional[float], Optional[float]]]:
+        if not task_ids:
+            return {}
+        logs = (self.session.query(AutoTaskRunLog)
+                .filter(
+                    AutoTaskRunLog.task_id.in_(task_ids),
+                    AutoTaskRunLog.tag == "result"
+                )
+                .order_by(desc(AutoTaskRunLog.log_id))
+                .all())
+        result: Dict[str, Tuple[Optional[float], Optional[float]]] = {}
+        for log in logs:
+            task_id = str(log.task_id)
+            if task_id in result:
+                continue
+            result[task_id] = self._parse_score_from_result(log.content)
+        return result
+
+    @staticmethod
+    def _parse_score_from_result(content: str) -> Tuple[Optional[float], Optional[float]]:
+        if not content:
+            return None, None
+        try:
+            payload = json.loads(content)
+        except (TypeError, ValueError):
+            return None, None
+        if not isinstance(payload, dict):
+            return None, None
+        judge_log = payload.get("judgeLog")
+        if not isinstance(judge_log, list):
+            return None, None
+        total_score = 0.0
+        full_score = 0.0
+        has_value = False
+        for item in judge_log:
+            if not isinstance(item, dict):
+                continue
+            jscore = item.get("jScore")
+            score = item.get("score")
+            try:
+                if jscore is not None:
+                    total_score += float(jscore)
+                    has_value = True
+            except (TypeError, ValueError):
+                pass
+            try:
+                if score is not None:
+                    full_score += float(score)
+            except (TypeError, ValueError):
+                pass
+        if not has_value:
+            return None, None
+        return round(total_score, 2), round(full_score, 2)

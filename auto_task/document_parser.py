@@ -10,7 +10,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Union
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import fitz
 import requests
@@ -46,6 +46,8 @@ MAX_FILE_SIZE = 16 * 1024 * 1024
 MAX_RECURSIVE_DOCS = 8
 DOC_EXTENSIONS = {".md", ".markdown", ".doc", ".docx", ".pdf"}
 URL_FILENAME_QUERY_KEYS = ("filename", "fileName", "name")
+TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".text"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 
 logger = logging.getLogger(__name__)
 
@@ -75,18 +77,12 @@ async def convert_document_to_markdown(
         content, images, doc_links = await _parse_markdown(content, user_id, depth)
     else:
         file_bytes, inferred_name = await _load_document_bytes(data, filename)
-        ext = Path((filename or inferred_name) or "").suffix.lower()
-        if ext in {".md", ".markdown", ""}:
-            text = file_bytes.decode("utf-8", errors="ignore")
-            content, images, doc_links = await _parse_markdown(text, user_id, depth)
-        elif ext == ".docx":
-            content, images = _parse_docx(file_bytes)
-            doc_links = []
-        elif ext == ".pdf":
-            content, images = _parse_pdf(file_bytes)
-            doc_links = []
-        else:
-            raise ValueError(f"不支持的文件类型: {ext}")
+        content, images, doc_links = await _convert_loaded_file_to_markdown(
+            file_bytes=file_bytes,
+            inferred_name=(filename or inferred_name) or "",
+            user_id=user_id,
+            depth=depth,
+        )
     content = await _process_nested_documents(content, doc_links, user_id, depth, task_id)
     return await _embed_images(content, images, user_id, task_id)
 
@@ -119,6 +115,49 @@ async def _load_document_bytes(data: Union[str, bytes], filename: Optional[str])
         raise ValueError("文件过大，超过 16MB")
     inferred_name = filename or _extract_filename_from_headers(headers)
     return content, inferred_name
+
+
+async def _convert_loaded_file_to_markdown(
+        file_bytes: bytes,
+        inferred_name: str,
+        user_id: int,
+        depth: int) -> Tuple[str, List[ImageResource], List[str]]:
+    ext = Path(inferred_name).suffix.lower()
+    preferred: List[str] = []
+    if ext in TEXT_EXTENSIONS:
+        preferred.append("text")
+    elif ext in {".doc", ".docx"}:
+        preferred.append("docx")
+    elif ext == ".pdf":
+        preferred.append("pdf")
+    elif ext in IMAGE_EXTENSIONS:
+        preferred.append("image")
+
+    ordered_strategies: List[str] = []
+    for strategy in preferred + ["text", "image", "docx", "pdf"]:
+        if strategy not in ordered_strategies:
+            ordered_strategies.append(strategy)
+
+    parse_errors: List[str] = []
+    for strategy in ordered_strategies:
+        try:
+            if strategy == "text":
+                text = _decode_text_bytes(file_bytes)
+                parsed_content, images, doc_links = await _parse_markdown(text, user_id, depth)
+                return parsed_content, images, doc_links
+            if strategy == "image":
+                image = _try_parse_image_bytes(file_bytes, inferred_name or None)
+                return IMAGE_PLACEHOLDER.format(0), [image], []
+            if strategy == "docx":
+                content, images = _parse_docx(file_bytes)
+                return content, images, []
+            if strategy == "pdf":
+                content, images = _parse_pdf(file_bytes)
+                return content, images, []
+        except Exception as exc:
+            parse_errors.append(f"{strategy}: {exc}")
+            continue
+    raise ValueError(f"文件解析失败: {', '.join(parse_errors) if parse_errors else '未知错误'}")
 
 
 async def _parse_markdown(text: str, user_id: int, depth: int) -> Tuple[str, List[ImageResource], List[str]]:
@@ -414,6 +453,8 @@ async def _process_markdown_link(
     try:
         resource_type, payload = await _load_external_resource(url, user_id, allow_document, is_image)
     except Exception:
+        if _is_filesys_download_url(url):
+            return ""
         return original
 
     if resource_type == "image":
@@ -437,6 +478,8 @@ async def _process_html_image(
     try:
         resource_type, payload = await _load_external_resource(url, user_id, allow_document, True)
     except Exception:
+        if _is_filesys_download_url(url):
+            return ""
         return match.group(0)
 
     if resource_type == "image":
@@ -463,6 +506,8 @@ async def _process_markdown_link_cn(
     try:
         resource_type, payload = await _load_external_resource(url, user_id, allow_document, is_image)
     except Exception:
+        if _is_filesys_download_url(url):
+            return ""
         return original
 
     if resource_type == "image":
@@ -488,6 +533,8 @@ async def _process_bare_url(
         # 由于是 /api/filesys/download/ 链接，通常是图片
         resource_type, payload = await _load_external_resource(url, user_id, allow_document, True)
     except Exception:
+        if _is_filesys_download_url(url):
+            return ""
         return match.group(0)
 
     if resource_type == "image":
@@ -508,13 +555,11 @@ async def _load_external_resource(
         is_image_hint: bool) -> Tuple[str, Union[ImageResource, str]]:
     file_id, file_name = _extract_file_reference(url)
     if file_id:
-        ext = Path(file_name or "").suffix.lower()
-        treat_as_doc = (ext in DOC_EXTENSIONS) or (not file_name and not is_image_hint)
-        if treat_as_doc:
-            if not allow_document:
-                raise ValueError("文档数量超限")
-            return "document", file_id
-        return "image", ImageResource(file_id=file_id, filename=file_name)
+        if allow_document:
+            return "document", _build_filesys_download_url(file_id, file_name)
+        if is_image_hint:
+            return "image", ImageResource(file_id=file_id, filename=file_name)
+        raise ValueError("文档数量超限")
     if url.startswith("data:"):
         header, encoded = url.split(',', 1)
         data = base64.b64decode(encoded)
@@ -549,6 +594,42 @@ def _ensure_png(data: bytes) -> bytes:
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _decode_text_bytes(file_bytes: bytes) -> str:
+    if not file_bytes:
+        raise ValueError("空文件")
+    candidates: List[str] = []
+    for encoding in ("utf-8", "utf-8-sig", "gb18030"):
+        try:
+            return file_bytes.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    candidates.append(file_bytes.decode("utf-8", errors="ignore"))
+    candidates.append(file_bytes.decode("gb18030", errors="ignore"))
+    for text in candidates:
+        stripped = text.strip()
+        if not stripped:
+            continue
+        total = len(text)
+        if total == 0:
+            continue
+        printable = sum(1 for ch in text if ch.isprintable() or ch in "\n\r\t")
+        replacement = text.count("\ufffd")
+        if printable / total < 0.8:
+            continue
+        if replacement / total > 0.1:
+            continue
+        return text
+    raise ValueError("非文本内容")
+
+
+def _try_parse_image_bytes(file_bytes: bytes, filename: Optional[str]) -> ImageResource:
+    if not file_bytes:
+        raise ValueError("空图片")
+    with Image.open(io.BytesIO(file_bytes)) as img:
+        img.verify()
+    return ImageResource(data=file_bytes, filename=filename or None)
 
 
 def _get_list_prefix(paragraph: Paragraph, numbering_state: Dict[str, Dict[int, int]]) -> Optional[str]:
@@ -632,6 +713,16 @@ def _guess_filename_from_url(url: str) -> str:
         if key in query and query[key]:
             return unquote(query[key][0])
     return ""
+
+
+def _build_filesys_download_url(file_id: str, file_name: Optional[str]) -> str:
+    name = file_name or file_id
+    return f"https://oj.qd.sdu.edu.cn/api/filesys/download/{file_id}/{quote(name)}"
+
+
+def _is_filesys_download_url(url: str) -> bool:
+    file_id, _ = _extract_file_reference(url)
+    return bool(file_id)
 
 
 def _is_document_reference_input(data: str) -> bool:
