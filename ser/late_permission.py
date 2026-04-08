@@ -3,7 +3,7 @@ from typing import List, Optional
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, validator
 
-from auth import cover_header, is_manager, problem_set_manager, group_manager
+from auth import cover_header, is_manager, group_manager
 from model.problem_set import problemSetModel
 from ser.base import obj2dict
 from ser.base_type import page
@@ -149,6 +149,14 @@ class LatePermissionBatchAdd(BaseModel):
         return v
 
 
+def _get_managed_problem_set(psid: int, SDUOJUserInfo: dict, ps_db=None):
+    if ps_db is None:
+        ps_db = problemSetModel()
+    ps_obj = ps_db.ps_get_obj_by_id(psid)
+    is_manager(ps_obj, SDUOJUserInfo)
+    return ps_obj
+
+
 def _populate_base_payload(data: LatePermissionBase, SDUOJUserInfo: dict):
     ps_db = problemSetModel()
     ps_obj = ps_db.ps_get_obj_by_id(data.psid)
@@ -163,18 +171,14 @@ def _populate_base_payload(data: LatePermissionBase, SDUOJUserInfo: dict):
 
 def ser_late_permission_add(
         data: LatePermissionBase, SDUOJUserInfo=Depends(cover_header)):
-    ps_db = problemSetModel()
-    ps_obj = ps_db.ps_get_obj_by_id(data.psid)
-    group_manager(ps_obj.groupId, SDUOJUserInfo)
+    ps_obj = _get_managed_problem_set(data.psid, SDUOJUserInfo)
     payload = _populate_base_payload(data, SDUOJUserInfo)
     return payload
 
 
 def ser_late_permission_update(
         data: LatePermissionUpdate, SDUOJUserInfo=Depends(cover_header)):
-    ps_db = problemSetModel()
-    ps_obj = ps_db.ps_get_obj_by_id(data.psid)
-    group_manager(ps_obj.groupId, SDUOJUserInfo)
+    _get_managed_problem_set(data.psid, SDUOJUserInfo)
     item_id = data.id
     payload = obj2dict(data).copy()
     payload.pop("psid", None)
@@ -190,9 +194,7 @@ def ser_late_permission_update(
 def ser_late_permission_list(
         data: LatePermissionList, SDUOJUserInfo=Depends(cover_header)):
     if data.psid is not None:
-        ps_db = problemSetModel()
-        ps_obj = ps_db.ps_get_obj_by_id(data.psid)
-        group_manager(ps_obj.groupId, SDUOJUserInfo)
+        _get_managed_problem_set(data.psid, SDUOJUserInfo)
     elif data.groupId is not None:
         group_manager(data.groupId, SDUOJUserInfo)
     else:
@@ -210,7 +212,6 @@ def ser_late_permission_list(
 
 def ser_late_permission_batch_add(
         data: LatePermissionBatchAdd, SDUOJUserInfo=Depends(cover_header)):
-    group_manager(data.groupId, SDUOJUserInfo)
     ps_db = problemSetModel()
     seen = set()
     psids = []
@@ -223,7 +224,7 @@ def ser_late_permission_batch_add(
     start_dt = datetime.fromtimestamp(getNowTime() / 1000)
     payloads = []
     for psid in psids:
-        ps_obj = ps_db.ps_get_obj_by_id(psid)
+        ps_obj = _get_managed_problem_set(psid, SDUOJUserInfo, ps_db)
         if ps_obj.groupId != data.groupId:
             raise HTTPException(
                 status_code=400,
