@@ -64,10 +64,16 @@ def _extract_payload_psid_from_logs(logs: List[dict]) -> Optional[int]:
 
 
 async def _assert_group_creator(group_id: int, user: dict):
+    """允许 group 创建者、superadmin 访问。"""
+    if "superadmin" in (user.get("roles") or []):
+        return
     group_info = _normalize_group_info(await getGroupMember(group_id))
-    owner = None if group_info is None else group_info.get("username")
-    if owner is None or str(owner) != str(user.get("username") or ""):
+    if group_info is None:
         raise HTTPException(status_code=403, detail="Permission Denial")
+    owner = group_info.get("username")
+    if str(owner or "") == str(user.get("username") or ""):
+        return
+    raise HTTPException(status_code=403, detail="Permission Denial")
 
 
 async def _assert_task_access(detail: dict, user: dict):
@@ -214,8 +220,6 @@ async def list_auto_tasks(
         user=Depends(cover_header)):
     if data.psid is not None:
         problem_set_manager(data.psid, user)
-    elif data.groupId is not None:
-        await _assert_group_creator(data.groupId, user)
 
     from model.auto_task import autoTaskModel
     model = autoTaskModel()
@@ -231,7 +235,7 @@ async def list_auto_tasks(
             "username": data.username,
             "score_le": data.scoreLe,
         }
-        if data.psid is not None or data.groupId is not None:
+        if data.psid is not None:
             total, rows = model.list_tasks_by_params(pg=pg, **query_kwargs)
         else:
             authorized_rows = await _filter_authorized_task_rows(

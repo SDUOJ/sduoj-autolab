@@ -92,25 +92,35 @@ def test_list_auto_tasks_psid_prefers_problem_set_auth(auto_task_module, monkeyp
     group_creator.assert_not_awaited()
 
 
-def test_list_auto_tasks_group_id_requires_group_creator(auto_task_module, monkeypatch):
+def test_list_auto_tasks_group_id_row_level_filter(auto_task_module, monkeypatch):
+    """groupId 分支不再做前置鉴权，而是按行级权限过滤：
+    group 创建者可以看到自己 group 的任务，非创建者不能。"""
     class FakeAutoTaskModel(_BaseFakeAutoTaskModel):
-        def list_tasks_by_params(self, **kwargs):
-            return 1, [{"id": "task-1", "groupId": 94}]
+        def list_tasks_all_by_params(self, **kwargs):
+            return [
+                {"id": "task-1", "groupId": 94},
+                {"id": "task-2", "groupId": 94},
+            ]
 
     _install_auto_task_model(monkeypatch, FakeAutoTaskModel)
 
-    problem_set_manager = MagicMock()
-    group_creator = AsyncMock()
-    monkeypatch.setattr(auto_task_module, "problem_set_manager", problem_set_manager)
-    monkeypatch.setattr(auto_task_module, "_assert_group_creator", group_creator)
+    async def _group_creator(group_id, user):
+        if group_id == 94 and user.get("username") == "owner-94":
+            return
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Permission Denial")
 
+    monkeypatch.setattr(auto_task_module, "_assert_group_creator", _group_creator)
+
+    # 创建者可以看到两条
     data = auto_task_module.AutoTaskListRequest(groupId=94, pageNow=1, pageSize=20)
     result = asyncio.run(auto_task_module.list_auto_tasks(data, {"username": "owner-94"}))
+    assert result["total"] == 2
 
-    assert result["total"] == 1
-    assert result["rows"] == [{"id": "task-1", "groupId": 94}]
-    group_creator.assert_awaited_once_with(94, {"username": "owner-94"})
-    problem_set_manager.assert_not_called()
+    # 非创建者看不到任何一条
+    result2 = asyncio.run(auto_task_module.list_auto_tasks(data, {"username": "other-user"}))
+    assert result2["total"] == 0
+    assert result2["rows"] == []
 
 
 def test_list_auto_tasks_without_filters_applies_row_level_permissions(auto_task_module, monkeypatch):
