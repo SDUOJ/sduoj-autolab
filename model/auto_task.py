@@ -179,9 +179,8 @@ class autoTaskModel(dbSession):
         )
         return data
 
-    def list_tasks_by_params(
+    def _build_task_query(
             self,
-            pg: page,
             psid: Optional[int] = None,
             groupId: Optional[int] = None,
             contestId: Optional[int] = None,
@@ -189,8 +188,7 @@ class autoTaskModel(dbSession):
             task_type: Optional[str] = None,
             status: Optional[str] = None,
             username: Optional[str] = None,
-            score_le: Optional[float] = None
-    ) -> Tuple[int, List[Dict[str, Any]]]:
+    ):
         query = self.session.query(AutoTaskRun)
         if psid is not None:
             query = query.filter(AutoTaskRun.psid == psid)
@@ -206,30 +204,84 @@ class autoTaskModel(dbSession):
             query = query.filter(AutoTaskRun.status == status)
         if username:
             query = query.filter(AutoTaskRun.username == username)
-        query = query.order_by(desc(AutoTaskRun.create_time))
+        return query.order_by(desc(AutoTaskRun.create_time))
 
-        if score_le is None:
-            total = query.count()
-            rows = query.offset(pg.offset()).limit(pg.limit()).all()
-            self._mark_timeout_rows(rows)
-            data = self.dealDataList(
-                rows,
-                ["start_time", "end_time", "create_time", "update_time"],
-            )
-            self._attach_result_scores(data)
-            return total, data
-
-        rows = query.all()
+    def _serialize_task_rows(self, rows: List[AutoTaskRun]) -> List[Dict[str, Any]]:
         self._mark_timeout_rows(rows)
         data = self.dealDataList(
             rows,
             ["start_time", "end_time", "create_time", "update_time"],
         )
         self._attach_result_scores(data)
-        filtered = [
+        return data
+
+    def list_tasks_all_by_params(
+            self,
+            psid: Optional[int] = None,
+            groupId: Optional[int] = None,
+            contestId: Optional[int] = None,
+            problemId: Optional[int] = None,
+            task_type: Optional[str] = None,
+            status: Optional[str] = None,
+            username: Optional[str] = None,
+            score_le: Optional[float] = None
+    ) -> List[Dict[str, Any]]:
+        query = self._build_task_query(
+            psid=psid,
+            groupId=groupId,
+            contestId=contestId,
+            problemId=problemId,
+            task_type=task_type,
+            status=status,
+            username=username,
+        )
+        data = self._serialize_task_rows(query.all())
+        if score_le is None:
+            return data
+        return [
             row for row in data
             if row.get("autoScore") is not None and float(row["autoScore"]) <= float(score_le)
         ]
+
+    def list_tasks_by_params(
+            self,
+            pg: page,
+            psid: Optional[int] = None,
+            groupId: Optional[int] = None,
+            contestId: Optional[int] = None,
+            problemId: Optional[int] = None,
+            task_type: Optional[str] = None,
+            status: Optional[str] = None,
+            username: Optional[str] = None,
+            score_le: Optional[float] = None
+    ) -> Tuple[int, List[Dict[str, Any]]]:
+        query = self._build_task_query(
+            psid=psid,
+            groupId=groupId,
+            contestId=contestId,
+            problemId=problemId,
+            task_type=task_type,
+            status=status,
+            username=username,
+        )
+
+        if score_le is None:
+            total = query.count()
+            data = self._serialize_task_rows(
+                query.offset(pg.offset()).limit(pg.limit()).all()
+            )
+            return total, data
+
+        filtered = self.list_tasks_all_by_params(
+            psid=psid,
+            groupId=groupId,
+            contestId=contestId,
+            problemId=problemId,
+            task_type=task_type,
+            status=status,
+            username=username,
+            score_le=score_le,
+        )
         total = len(filtered)
         offset = pg.offset()
         limit = pg.limit()

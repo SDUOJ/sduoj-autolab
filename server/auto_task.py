@@ -1,10 +1,12 @@
+import json
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from auth import cover_header, problem_set_manager, group_manager
+from auth import cover_header, problem_set_manager
+from sduojApi import getGroupMember
 from utils import makeResponse
 from ser.base_type import page
 from model.answer_sheet import answerSheetModel
@@ -16,6 +18,128 @@ from db import (
 )
 
 router = APIRouter(prefix="/auto-task", tags=["auto-task"])
+
+
+def _model_to_dict(model: BaseModel) -> dict:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    return model.dict()
+
+
+def _to_optional_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_group_info(group_info: Any) -> Optional[dict]:
+    if not isinstance(group_info, dict):
+        return None
+    data = group_info.get("data")
+    if isinstance(data, dict):
+        return data
+    return group_info
+
+
+def _extract_payload_psid_from_logs(logs: List[dict]) -> Optional[int]:
+    for log in logs or []:
+        if log.get("tag") != "payload":
+            continue
+        content = log.get("content")
+        if not content:
+            continue
+        try:
+            payload = json.loads(content)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        psid = _to_optional_int(payload.get("psid"))
+        if psid is not None:
+            return psid
+    return None
+
+
+async def _assert_group_creator(group_id: int, user: dict):
+    group_info = _normalize_group_info(await getGroupMember(group_id))
+    owner = None if group_info is None else group_info.get("username")
+    if owner is None or str(owner) != str(user.get("username") or ""):
+        raise HTTPException(status_code=403, detail="Permission Denial")
+
+
+async def _assert_task_access(detail: dict, user: dict):
+    psid = _to_optional_int(detail.get("psid"))
+    if psid is not None:
+        problem_set_manager(psid, user)
+        return
+
+    group_id = _to_optional_int(detail.get("groupId"))
+    if group_id is not None:
+        await _assert_group_creator(group_id, user)
+        return
+
+    payload_psid = _extract_payload_psid_from_logs(detail.get("logs", []))
+    if payload_psid is not None:
+        problem_set_manager(payload_psid, user)
+        return
+
+    raise HTTPException(status_code=403, detail="Permission Denial")
+
+
+def _has_problem_set_access(psid: int, user: dict, cache: Dict[int, bool]) -> bool:
+    if psid not in cache:
+        try:
+            problem_set_manager(psid, user)
+            cache[psid] = True
+        except HTTPException:
+            cache[psid] = False
+    return cache[psid]
+
+
+async def _has_group_creator_access(group_id: int, user: dict, cache: Dict[int, bool]) -> bool:
+    if group_id not in cache:
+        try:
+            await _assert_group_creator(group_id, user)
+            cache[group_id] = True
+        except HTTPException:
+            cache[group_id] = False
+    return cache[group_id]
+
+
+async def _filter_authorized_task_rows(model, rows: List[dict], user: dict) -> List[dict]:
+    psid_cache: Dict[int, bool] = {}
+    group_cache: Dict[int, bool] = {}
+    authorized_rows: List[dict] = []
+
+    for row in rows:
+        psid = _to_optional_int(row.get("psid"))
+        if psid is not None:
+            if _has_problem_set_access(psid, user, psid_cache):
+                authorized_rows.append(row)
+            continue
+
+        group_id = _to_optional_int(row.get("groupId"))
+        if group_id is not None:
+            if await _has_group_creator_access(group_id, user, group_cache):
+                authorized_rows.append(row)
+            continue
+
+        task_id = row.get("id")
+        if not task_id:
+            continue
+
+        try:
+            detail = model.get_task_detail(str(task_id))
+        except HTTPException:
+            continue
+        payload_psid = _extract_payload_psid_from_logs(detail.get("logs", []))
+        if payload_psid is not None and _has_problem_set_access(payload_psid, user, psid_cache):
+            authorized_rows.append(row)
+
+    return authorized_rows
 
 
 class ProgrammingProblemRef(BaseModel):
@@ -61,7 +185,7 @@ async def create_subjective_review_tasks(
                     "pid": item.pid,
                     "username": item.username,
                     "ps_description": ps_description,
-                    "programmingProblems": [pp.dict() for pp in item.programmingProblems],
+                    "programmingProblems": [_model_to_dict(pp) for pp in item.programmingProblems],
                 }
                 for item in tasks
             ]
@@ -91,24 +215,32 @@ async def list_auto_tasks(
     if data.psid is not None:
         problem_set_manager(data.psid, user)
     elif data.groupId is not None:
-        group_manager(data.groupId, user)
-    # 可以在此添加 contestId 或 其他维度的权限校验 logic
+        await _assert_group_creator(data.groupId, user)
 
     from model.auto_task import autoTaskModel
     model = autoTaskModel()
     try:
         pg = page(pageNow=data.pageNow, pageSize=data.pageSize)
-        total, rows = model.list_tasks_by_params(
-            pg=pg,
-            psid=data.psid,
-            groupId=data.groupId,
-            contestId=data.contestId,
-            problemId=data.problemId,
-            task_type=data.taskType,
-            status=data.status,
-            username=data.username,
-            score_le=data.scoreLe
-        )
+        query_kwargs = {
+            "psid": data.psid,
+            "groupId": data.groupId,
+            "contestId": data.contestId,
+            "problemId": data.problemId,
+            "task_type": data.taskType,
+            "status": data.status,
+            "username": data.username,
+            "score_le": data.scoreLe,
+        }
+        if data.psid is not None or data.groupId is not None:
+            total, rows = model.list_tasks_by_params(pg=pg, **query_kwargs)
+        else:
+            authorized_rows = await _filter_authorized_task_rows(
+                model,
+                model.list_tasks_all_by_params(**query_kwargs),
+                user,
+            )
+            total = len(authorized_rows)
+            rows = authorized_rows[pg.offset():pg.offset() + pg.limit()]
     finally:
         model.session.close()
     return makeResponse({
@@ -133,20 +265,21 @@ async def create_summary_report_task(
     """
     创建成绩报告导出任务 (小组维度)
     """
-    group_manager(data.groupId, userinfo)
+    await _assert_group_creator(data.groupId, userinfo)
     
     from model.auto_task import autoTaskModel
     model = autoTaskModel()
-    
-    payload = data.dict()
-    payload["userId"] = userinfo["userId"]
-    
-    task_id = model.add_task(
-        task_type="summary_report",
-        psid=None,
-        groupId=data.groupId,
-        payload=payload
-    )
+    try:
+        payload = _model_to_dict(data)
+        payload["userId"] = userinfo["userId"]
+        task_id = model.add_task(
+            task_type="summary_report",
+            psid=None,
+            groupId=data.groupId,
+            payload=payload
+        )
+    finally:
+        model.session.close()
     
     return makeResponse({
         "taskId": task_id,
@@ -162,12 +295,7 @@ async def get_task_detail(task_id: str, user=Depends(cover_header)):
         detail = model.get_task_detail(task_id)
     finally:
         model.session.close()
-    psid = detail.get("psid")
-    groupId = detail.get("groupId")
-    if psid is not None:
-        problem_set_manager(psid, user)
-    elif groupId is not None:
-        group_manager(groupId, user)
+    await _assert_task_access(detail, user)
     logs = detail.pop("logs", [])
     detail["logs"] = logs
     return makeResponse(detail)
@@ -215,12 +343,7 @@ async def rerun_task(task_id: str, user=Depends(cover_header)):
     model = autoTaskModel()
     try:
         detail = model.get_task_detail(task_id)
-        psid = detail.get("psid")
-        groupId = detail.get("groupId")
-        if psid is not None:
-            problem_set_manager(psid, user)
-        elif groupId is not None:
-            group_manager(groupId, user)
+        await _assert_task_access(detail, user)
         model.rerun_task(task_id)
     finally:
         model.session.close()
@@ -233,12 +356,7 @@ async def delete_task(task_id: str, user=Depends(cover_header)):
     model = autoTaskModel()
     try:
         detail = model.get_task_detail(task_id)
-        psid = detail.get("psid")
-        groupId = detail.get("groupId")
-        if psid is not None:
-            problem_set_manager(psid, user)
-        elif groupId is not None:
-            group_manager(groupId, user)
+        await _assert_task_access(detail, user)
         model.delete_task(task_id)
     finally:
         model.session.close()
