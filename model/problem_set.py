@@ -120,9 +120,10 @@ class problemSetModel(dbSession):
             tag_filter = or_(
                 ProblemSet.tag.is_(None),
                 ProblemSet.tag == "",
+                ProblemSet.tag == "  ",
             )
         else:
-            tag_filter = ProblemSet.tag == key
+            tag_filter = ProblemSet.tag == tag
         cmd = self.session.query(ProblemSet).filter(
             and_(ProblemSet.groupId == groupId, tag_filter)
         )
