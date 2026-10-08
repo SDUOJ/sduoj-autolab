@@ -95,7 +95,7 @@ class problemSetModel(dbSession):
         ).all()
         res = {}
         for x in data:
-            tag = x.tag or "未分类"
+            tag = self._normalize_tag(x.tag)
             if tag not in res:
                 res[tag] = []
             res[tag].append({
@@ -104,12 +104,27 @@ class problemSetModel(dbSession):
             })
         return res
 
+    @staticmethod
+    def _normalize_tag(tag) -> str:
+        # Keep filter tabs and list filters in sync: blank/NULL tags share one bucket.
+        if tag is None:
+            return "未分类"
+        text = str(tag).strip()
+        return text if text else "未分类"
+
     @cache(expire=60, key_builder=class_func_key_builder)
     async def ps_get_list_search_info_by_page_cache(
             self, pg: page, groupId, key):
+        tag = self._normalize_tag(key)
+        if tag == "未分类":
+            tag_filter = or_(
+                ProblemSet.tag.is_(None),
+                ProblemSet.tag == "",
+            )
+        else:
+            tag_filter = ProblemSet.tag == key
         cmd = self.session.query(ProblemSet).filter(
-            and_(ProblemSet.groupId == groupId,
-                 ProblemSet.tag == key)
+            and_(ProblemSet.groupId == groupId, tag_filter)
         )
         tn = cmd.count()
         data = cmd.offset(pg.offset()).limit(pg.limit())
@@ -125,13 +140,14 @@ class problemSetModel(dbSession):
         ).all()
         res = {"label": [], "score": {}, "sum": 0}
         for x in data:
-            if x.tag not in res["label"]:
-                res["label"].append(x.tag)
-            if x.tag not in res["score"]:
-                res["score"][x.tag] = 0
+            tag = self._normalize_tag(x.tag)
+            if tag not in res["label"]:
+                res["label"].append(tag)
+            if tag not in res["score"]:
+                res["score"][tag] = 0
             # 兼容 global_score 可能为 None 的情况
             gscore = x.global_score if x.global_score is not None else 0
-            res["score"][x.tag] += gscore
+            res["score"][tag] += gscore
             res["sum"] += gscore
 
         # sum 四舍五入保留一位小数
