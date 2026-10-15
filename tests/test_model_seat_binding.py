@@ -66,13 +66,13 @@ class TestSeatBindingModel:
         mock_query_course.filter.return_value.first.return_value = mock_course
         
         mock_query_classroom = MagicMock()
-        mock_query_classroom.filter.return_value.all.return_value = [mock_classroom]
+        mock_query_classroom.filter.return_value.all.return_value = [(1,)]
         
         mock_query_occupied = MagicMock()
         mock_query_occupied.filter.return_value.all.return_value = []  # 没有已占用座位
         
         mock_query_existing = MagicMock()
-        mock_query_existing.filter.return_value.first.return_value = None  # 学生没有座位
+        mock_query_existing.filter.return_value.all.return_value = [mock_classroom]
         
         mock_session.session.query.side_effect = [
             mock_query_course,     # 查询课程
@@ -88,11 +88,14 @@ class TestSeatBindingModel:
         }
         
         # 执行测试
-        result = await SeatBindingModel.auto_assign_seats(1, 100)
+        with patch.object(SeatBindingModel, '_build_course_classroom_slots', return_value={1: [1, 2]}):
+            result = await SeatBindingModel.auto_assign_seats(1, usernames=["20220101", "20220102"])
         
         # 验证
         assert result.code == 0
         assert "自动分配成功" in result.msg
+        assert len(result.data["assigned"]) == 2
+        assert mock_session.session.add.call_count == 2
     
     @patch('model.class_binding.dbSession')
     def test_get_seat_map_success(self, mock_db_session_class, mock_course, mock_classroom):

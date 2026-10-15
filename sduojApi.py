@@ -8,7 +8,7 @@ import requests
 from fastapi_cache.decorator import cache
 
 from cache import class_func_key_builder
-from const import SDUOJ_TOKEN, NACOS_addr, NACOS_namespace
+from const import SDUOJ_TOKEN, NACOS_addr, NACOS_namespace, MOD, PUBLIC_OJ_BASE_URL
 
 requestHeaders = {"sduoj-token": SDUOJ_TOKEN}
 FILESYS_DOWNLOAD_RE = re.compile(r"/api/filesys/download/(\d+)(?:/([^/?#]+))?")
@@ -16,12 +16,25 @@ FILESYS_DOWNLOAD_RE = re.compile(r"/api/filesys/download/(\d+)(?:/([^/?#]+))?")
 
 # @cache(expire=60)
 async def getService_ip_port(server_name):
+    return get_service_address(server_name)
+
+
+def get_service_address(server_name):
+    """Synchronous resolver for synchronous RPC calls, including async-decorated API routes."""
+    if MOD == "debug":
+        from dev_config import SERVICE_PORTS
+
+        if server_name not in SERVICE_PORTS:
+            raise RuntimeError(f"No local development endpoint for {server_name}")
+        return f"127.0.0.1:{SERVICE_PORTS[server_name]}"
     data = requests.get(
         "http://" + NACOS_addr + "/nacos/v1/ns/instance/list",
         params={
             "serviceName": "DEFAULT_GROUP@@{}".format(server_name),
             "namespaceId": NACOS_namespace
         },
+        timeout=(1, 3),
+        allow_redirects=False,
     ).json()
     hosts = data.get("hosts", [])
     if not hosts:
@@ -227,7 +240,7 @@ async def downloadFile(fileId):
     fallback_url = None
     internal_id = raw
     if raw.startswith("oj-file://"):
-        raw = f"https://oj.qd.sdu.edu.cn/api/filesys/download/{raw.split('oj-file://', 1)[-1]}/{raw.split('oj-file://', 1)[-1]}"
+        raw = f"{PUBLIC_OJ_BASE_URL}/api/filesys/download/{raw.split('oj-file://', 1)[-1]}/{raw.split('oj-file://', 1)[-1]}"
     if raw.startswith("http://") or raw.startswith("https://"):
         parsed = urlparse(raw)
         match = FILESYS_DOWNLOAD_RE.search(parsed.path or "")
@@ -257,8 +270,11 @@ async def downloadFile(fileId):
     except Exception:
         pass
 
+    if MOD == "debug":
+        raise RuntimeError(f"File {internal_id} is unavailable in the local development snapshot")
+
     if fallback_url is None:
-        fallback_url = f"https://oj.qd.sdu.edu.cn/api/filesys/download/{internal_id}/{internal_id}"
+        fallback_url = f"{PUBLIC_OJ_BASE_URL}/api/filesys/download/{internal_id}/{internal_id}"
 
     def _fallback():
         resp = requests.get(fallback_url, stream=True)

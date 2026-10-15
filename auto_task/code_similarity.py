@@ -1,4 +1,4 @@
-"""Placeholder implementation for code similarity automation tasks."""
+"""Compatibility registration for the durable JPlag workflow."""
 
 from __future__ import annotations
 
@@ -12,14 +12,17 @@ logger = logging.getLogger(__name__)
 
 @register_task("code_similarity")
 class CodeSimilarityTask(BaseAutoTask):
-    """Handle code similarity inspection tasks (implementation TBD)."""
+    """Execute JPlag within an already claimed durable task."""
 
     def run(self) -> Dict[str, Any]:
-        logger.info("Code similarity task received: payload=%s", self.payload)
-        return {
-            "message": "Code similarity checking is not implemented yet.",
-            "payload": self.payload,
-        }
+        from .entities import TaskJob
+        from .runtime import Context
+        from .plagiarism import scan
+        from .store import transaction
+        with transaction() as session:
+            row = session.query(TaskJob).filter_by(id=self.raw_task["task_id"], status="running").one()
+            job = {column.name: getattr(row, column.name) for column in TaskJob.__table__.columns}
+        return scan(Context(job), self.payload)
 
 
 __all__ = ["CodeSimilarityTask"]

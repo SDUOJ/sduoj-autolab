@@ -137,8 +137,9 @@ class TestCourseEdgeCases:
         
         result = CourseModel.assign_classrooms(1, [])
         
-        # 验证：空列表应该被接受
-        assert result.code == 0
+        assert result.code == 1
+        assert result.msg == "请至少分配一个教室"
+        mock_session.session.commit.assert_not_called()
 
 
 class TestAttendanceEdgeCases:

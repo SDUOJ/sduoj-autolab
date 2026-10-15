@@ -107,6 +107,7 @@ class TestCourseModel:
         
         mock_query = MagicMock()
         mock_query.offset.return_value.limit.return_value.all.return_value = [mock_course]
+        mock_query.order_by.return_value.all.return_value = [mock_course]
         mock_query.count.return_value = 1
         mock_session.session.query.return_value = mock_query
         
@@ -176,6 +177,7 @@ class TestCourseModel:
         
         mock_query = MagicMock()
         mock_query.filter.return_value.first.return_value = mock_course
+        mock_query.filter.return_value.all.return_value = [(1,), (2,), (3,)]
         mock_session.session.query.return_value = mock_query
         
         # 执行测试
@@ -214,6 +216,8 @@ class TestCourseModel:
         
         mock_query = MagicMock()
         mock_query.filter.return_value.all.return_value = [mock_ta]
+        mock_course.ext_config = json.dumps({"ta_list": [{"TA_id": 1, "TA_name": "ta001", "ext_info": {}}]})
+        mock_query.filter.return_value.first.return_value = mock_course
         
         mock_session.session.query.return_value = mock_query
         

@@ -1,7 +1,7 @@
 import json
 from urllib import parse
 
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
 
 from utilsTime import afterTime
 
@@ -154,19 +154,85 @@ def manager(SDUOJUserInfo):
         raise HTTPException(detail="Permission Denial", status_code=403)
 
 
-def cover_header(SDUOJUserInfo=Header(None)):
+def validate_user_info(value):
+    if not isinstance(value, dict):
+        raise ValueError("Expected an identity object")
+    user_id = value.get("userId")
+    username = value.get("username")
+    roles = value.get("roles")
+    groups = value.get("groups")
+    if (isinstance(user_id, bool) or not isinstance(user_id, int)
+            or not 0 < user_id <= 9223372036854775807):
+        raise ValueError("Invalid user ID")
+    if not isinstance(username, str) or not username or len(username) > 256:
+        raise ValueError("Invalid username")
+    if not isinstance(roles, list) or len(roles) > 64 or not all(
+            isinstance(role, str) and 0 < len(role) <= 128 for role in roles):
+        raise ValueError("Invalid roles")
+    if not isinstance(groups, list) or len(groups) > 10000 or not all(
+            isinstance(group, int) and not isinstance(group, bool) and group > 0
+            for group in groups):
+        raise ValueError("Invalid groups")
+    if len(set(roles)) != len(roles) or len(set(groups)) != len(groups):
+        raise ValueError("Duplicate identity claim")
+    return value
+
+
+def _unique_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("Duplicate JSON key")
+        value[key] = item
+    return value
+
+
+def decode_user_info(raw):
+    if not isinstance(raw, str) or not raw or len(raw) > 65536:
+        raise ValueError("Invalid identity header")
+    decoded = parse.unquote_plus(raw, encoding="utf-8", errors="strict")
+    value = json.loads(
+        decoded,
+        object_pairs_hook=_unique_object,
+        parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Invalid JSON constant")),
+    )
+    return validate_user_info(value)
+
+
+def cover_header(
+        request: Request,
+        SDUOJUserInfo: str = Header(None),
+        SDUOJUserInfoUserId: str = Header(None, alias="SDUOJUserInfo-UserId")):
     try:
-        return json.loads(parse.unquote(SDUOJUserInfo))
-    except:
-        raise HTTPException(detail="Permission Denial", status_code=403)
+        values = request.headers.getlist("SDUOJUserInfo")
+        user_id_values = request.headers.getlist("SDUOJUserInfo-UserId")
+        if (len(values) != 1 or values[0] != SDUOJUserInfo
+                or len(user_id_values) != 1
+                or user_id_values[0] != SDUOJUserInfoUserId):
+            raise ValueError("Expected exactly one copy of each identity header")
+        if (not isinstance(SDUOJUserInfoUserId, str)
+                or not SDUOJUserInfoUserId.isascii()
+                or not SDUOJUserInfoUserId.isdecimal()
+                or str(int(SDUOJUserInfoUserId)) != SDUOJUserInfoUserId):
+            raise ValueError("Invalid identity subject header")
+        user = decode_user_info(SDUOJUserInfo)
+        if user["userId"] != int(SDUOJUserInfoUserId):
+            raise ValueError("Identity subject mismatch")
+        return user
+    except (TypeError, ValueError, UnicodeError, json.JSONDecodeError) as error:
+        raise HTTPException(detail="Permission Denial", status_code=403) from error
 
 
-def tokenTool(SDUOJUserInfo: str = Header(None)):
-    return cover_header(SDUOJUserInfo)
+def tokenTool(
+        request: Request,
+        SDUOJUserInfo: str = Header(None),
+        SDUOJUserInfoUserId: str = Header(None, alias="SDUOJUserInfo-UserId")):
+    return cover_header(request, SDUOJUserInfo, SDUOJUserInfoUserId)
 
 
 def parse_header(SDUOJUserInfo):
     try:
-        return parse.quote(json.dumps(SDUOJUserInfo))
-    except:
-        raise HTTPException(detail="Gateway Message Error", status_code=500)
+        validate_user_info(SDUOJUserInfo)
+        return parse.quote_plus(json.dumps(SDUOJUserInfo, ensure_ascii=False, separators=(",", ":")))
+    except (TypeError, ValueError) as error:
+        raise HTTPException(detail="Gateway Message Error", status_code=500) from error

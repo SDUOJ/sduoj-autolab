@@ -101,7 +101,7 @@ class problem_set_base(BaseModel):
     groupId: int
     tag: str
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def validate_root(cls, values):
         return check_value(values)
 
@@ -136,7 +136,7 @@ class problem_set_edit(problem_set_psid):
     groupId: Optional[int]
     tag: Optional[str]
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def validate_root(cls, values):
         return check_value(values)
 

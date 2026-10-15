@@ -245,7 +245,11 @@ class answerSheetModel(problemSetModel, groupModel):
         for x in asd_data:
             asd = await self.get_detail_info_by_asd_obj(x)
             gid, pid, answer = asd["gid"], asd["pid"], asd["answer"]
-            i, j, tp = id2index[str(gid) + "-" + str(pid)]
+            position = id2index.get(str(gid) + "-" + str(pid))
+            # Keep historical answers when a problem or group is removed.
+            if position is None:
+                continue
+            i, j, tp = position
             data[i][j].update({
                 "hasAnswer": (answer is not None) and len(answer) != 0,
                 "collect": asd["collect"]
@@ -359,7 +363,11 @@ class answerSheetModel(problemSetModel, groupModel):
         allSubmission = await getSubmissionScore(psid, None, None, get_code)
 
         for x in asd_data:
-            i, j, tp = id2index[str(x.gid) + "-" + str(x.pid)]
+            position = id2index.get(str(x.gid) + "-" + str(x.pid))
+            # Only current problems contribute to progress and ranking.
+            if position is None:
+                continue
+            i, j, tp = position
             username = ids2username[x.asid]
             x = await self.get_detail_info_by_asd_obj(x)
             answer = x["answer"]

@@ -25,6 +25,7 @@ from const import (
     LLM_DOUBAO_MODEL,
     LLM_VOLC_DEEPSEEK_MODEL,
     LAYOUT_PARSING_API_URL,
+    PUBLIC_OJ_BASE_URL,
 )
 from sduojApi import downloadFile
 from model.auto_task import autoTaskModel
@@ -63,7 +64,8 @@ class AutoTaskLLMClient:
             self.config.base_url,
             json=payload,
             headers=headers,
-            timeout=None,
+            timeout=(10, 480),
+            allow_redirects=False,
         )
         try:
             resp.raise_for_status()
@@ -113,6 +115,24 @@ async def call_structured_llm(
         max_retries: int = 3,
         task_id: Optional[str] = None) -> T:
     """Call the appropriate LLM and enforce JSON-structured output."""
+
+    # Existing document/vision helpers participate in the durable task's provider and billing scope.
+    from auto_task.runtime import ACTIVE_CONTEXT
+    context = ACTIVE_CONTEXT.get()
+    if context is not None:
+        from auto_task.entities import uid
+        from ser.auto_task_ai import output_schema
+        paths = []
+        for image in await _load_image_contents(image_file_ids or []):
+            value = image["image_url"]["url"]
+            if not value.startswith("data:image/png;base64,"):
+                raise ValueError("Expected normalized PNG image")
+            path = context.workspace / ("vision-" + uid() + ".png")
+            path.write_bytes(base64.b64decode(value.split(",", 1)[1], validate=True))
+            path.chmod(0o600)
+            paths.append(path)
+        prompt = "\n\n".join(str(item.get("content", "")) for item in messages)
+        return schema_model.parse_obj(context.ask(prompt, output_schema(schema_model), paths))
 
     has_images = bool(image_file_ids)
     configs: List[LLMConfig] = []
@@ -370,7 +390,7 @@ def _truncate_text(text: str, limit: int) -> str:
 
 def _build_file_download_url(file_id: str) -> str:
     """Return a direct HTTP download URL for the given file id."""
-    return f"https://oj.qd.sdu.edu.cn/api/filesys/download/{file_id}/{file_id}"
+    return f"{PUBLIC_OJ_BASE_URL}/api/filesys/download/{file_id}/{file_id}"
 
 
 def _append_llm_response_log(task_id: Optional[str], model_name: str, is_multimodal: bool, response_text: str) -> None:

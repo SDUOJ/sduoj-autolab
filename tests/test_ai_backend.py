@@ -613,6 +613,7 @@ def test_api_only_uses_existing_method_policy(client):
     ("ide.tutor", "ide", {"language": "python", "code": "print(4)"}),
 ])
 def test_workflow_handlers_apply_validated_results(database, monkeypatch, task_type, kind, data):
+    monkeypatch.setattr("auto_task.access.fetch_actor", lambda subject, **_: USER)
     from auto_task.runtime import Context
     results = {
         "Moderation": {"decision": "normal", "reason": ""},
@@ -1221,6 +1222,7 @@ def test_content_moderation_replay_is_idempotent(database, monkeypatch):
 
 
 def test_visible_ide_cases_capture_mismatch_and_runtime_error(database, monkeypatch):
+    monkeypatch.setattr("auto_task.access.fetch_actor", lambda subject, **_: USER)
     with store.transaction() as s:
         row = resource(s, "42", "ide", {"language": "python", "code": "print(4)"})
         store.submit(s, USER, "ide.execute", {"tests": [{"input": "1", "output": "4"}, {"input": "2", "output": "5"}, {"input": "3", "output": "4"}]}, "cases", row)

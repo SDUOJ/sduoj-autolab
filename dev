@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")"
+export SDUOJ_MODE=debug
+# Bypass inherited HTTP proxies for local services and Docker host names.
+export NO_PROXY="localhost,127.0.0.1,::1,sduoj-nacos,sduoj-mysql,sduoj-redis,sduoj-rabbit,host.docker.internal,${NO_PROXY:-}"
+export no_proxy="$NO_PROXY"
+exec python -m uvicorn main:app --reload --host 0.0.0.0 --port 5005 "$@"
