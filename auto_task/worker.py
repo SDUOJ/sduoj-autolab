@@ -6,7 +6,7 @@ import signal
 import threading
 from multiprocessing import Process
 
-from .store import LeaseLost, claim, complete, fail
+from .store import AuthorizationRevoked, LeaseLost, claim, complete, fail
 
 _worker_process = None
 logger = logging.getLogger(__name__)
@@ -53,6 +53,14 @@ def run_once():
         from .access import authorize_execution
         authorize_execution(job)
         complete(job["id"], job["lease_token"], result, apply)
+    except AuthorizationRevoked as error:
+        try:
+            # fail() fences the write with this worker's original lease. A
+            # revoked identity must release its slot, never a successor's lease.
+            fail(job["id"], job["lease_token"], str(error), retry=False)
+        except LeaseLost:
+            pass
+        logger.info("Task %s authorization revoked", job["id"])
     except LeaseLost:
         logger.info("Task %s lease revoked", job["id"])
     except Exception as error:

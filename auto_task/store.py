@@ -265,6 +265,10 @@ class LeaseLost(Exception):
     pass
 
 
+class AuthorizationRevoked(LeaseLost):
+    """The worker may still own its lease, but OJ access no longer permits work."""
+
+
 def heartbeat(job_id, token):
     with transaction() as s:
         job = fenced(s, job_id, token)

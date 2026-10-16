@@ -8,7 +8,7 @@ import requests
 from fastapi import HTTPException
 
 from .resources import get_resource, ps_access
-from .store import LeaseLost, principal, transaction
+from .store import AuthorizationRevoked, LeaseLost, principal, transaction
 
 
 def gateway_allowed(peer, mode, peer_port=None):
@@ -81,7 +81,7 @@ def authorize_execution(job):
         try:
             from .management_agent import owned
             if principal(actor) != job["owner_id"] or actor["username"] != job["owner_username"]:
-                raise LeaseLost("OJ task identity changed")
+                raise AuthorizationRevoked("OJ task identity changed")
             payload = json.loads(job.get("payload") or "{}")
             if payload.get("session_id") != job.get("resource_id"):
                 raise LeaseLost("Management session binding changed")
@@ -90,14 +90,14 @@ def authorize_execution(job):
                 if json.loads(row.data).get("task_id") != job["id"]:
                     raise LeaseLost("Management task superseded")
         except HTTPException as error:
-            raise LeaseLost("Management authorization revoked") from error
+            raise AuthorizationRevoked("Management authorization revoked") from error
         return
     teaching_ide = job.get("task_type", "").startswith("ide.")
     if MOD == "debug" and os.environ.get("AUTOLAB_AI_VALIDATE_IDENTITY") == "0" and not teaching_ide:
         return
     actor = fetch_actor(job["owner_id"])
     if principal(actor) != job["owner_id"] or actor["username"] != job["owner_username"]:
-        raise LeaseLost("OJ task identity changed")
+        raise AuthorizationRevoked("OJ task identity changed")
     try:
         with transaction() as s:
             if job.get("task_type", "").startswith("ide."):
@@ -105,7 +105,7 @@ def authorize_execution(job):
                 from utilsTime import getNowTime
                 actor = authorize_teaching_ide(s, job["owner_id"], getNowTime())
                 if actor["username"] != job["owner_username"]:
-                    raise LeaseLost("OJ task identity changed")
+                    raise AuthorizationRevoked("OJ task identity changed")
             if job.get("resource_id"):
                 row = get_resource(s, actor, job["resource_id"])
                 if row.kind != "interview":
@@ -122,4 +122,4 @@ def authorize_execution(job):
             elif job.get("psid"):
                 ps_access(s, actor, job["psid"], True)
     except HTTPException as error:
-        raise LeaseLost("OJ task authorization revoked") from error
+        raise AuthorizationRevoked("OJ task authorization revoked") from error
