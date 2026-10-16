@@ -35,7 +35,7 @@ def sessions(user=Depends(cover_header)):
     require_admin(user)
     with transaction() as s:
         rows = s.query(AiResource).filter_by(kind='management_session', owner_id=str(user['userId']), deleted=0).order_by(AiResource.updated_at.desc()).limit(200).all()
-        return [{'id': row.id, 'title': json.loads(row.data)['title'], 'state': row.state,
+        return [{'id': row.id, 'title': json.loads(row.data)['title'], 'state': agent.session_view(s, row)['state'],
                  'updated_at': row.updated_at.isoformat()} for row in rows]
 
 @router.post('/sessions')
@@ -55,13 +55,7 @@ def detail(session_id: str, user=Depends(cover_header)):
     with transaction() as s:
         row = agent.owned(s, user, session_id)
         result = agent.view(row)
-        # An interrupted backend never restores a pending approval automatically.
-        if row.state in ('running', 'approval') and not agent.runtime(session_id):
-            result['state'] = 'disconnected'
-            for action in result['actions']:
-                if action['status'] == 'pending': action['status'] = 'expired'
-                if action['status'] == 'executing': action['status'] = 'unknown'
-        return result
+        return agent.session_view(s, row)
 
 @router.post('/sessions/{session_id}/messages')
 @api_response()
@@ -77,8 +71,5 @@ def decision(session_id: str, action_id: str, body: Decision, request: Request, 
 @router.post('/sessions/{session_id}/stop')
 @api_response()
 def stop(session_id: str, user=Depends(cover_header)):
-    with transaction() as s: agent.owned(s, user, session_id)
-    with agent.RUNTIME_LOCK:
-        runtime = agent.runtime(session_id)
-        if runtime: runtime.close()
+    agent.stop_turn(session_id, user)
     return {'stopped': True}

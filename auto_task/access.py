@@ -75,6 +75,23 @@ def fetch_actor(subject, fresh=False):
 
 def authorize_execution(job):
     from const import MOD
+    if job.get("task_type") == "management.turn":
+        # Management never uses the development identity bypass.
+        actor = fetch_actor(job["owner_id"], fresh=True)
+        try:
+            from .management_agent import owned
+            if principal(actor) != job["owner_id"] or actor["username"] != job["owner_username"]:
+                raise LeaseLost("OJ task identity changed")
+            payload = json.loads(job.get("payload") or "{}")
+            if payload.get("session_id") != job.get("resource_id"):
+                raise LeaseLost("Management session binding changed")
+            with transaction() as s:
+                row = owned(s, actor, job["resource_id"])
+                if json.loads(row.data).get("task_id") != job["id"]:
+                    raise LeaseLost("Management task superseded")
+        except HTTPException as error:
+            raise LeaseLost("Management authorization revoked") from error
+        return
     teaching_ide = job.get("task_type", "").startswith("ide.")
     if MOD == "debug" and os.environ.get("AUTOLAB_AI_VALIDATE_IDENTITY") == "0" and not teaching_ide:
         return

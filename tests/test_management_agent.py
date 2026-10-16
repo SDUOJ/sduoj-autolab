@@ -7,8 +7,8 @@ from fastapi.testclient import TestClient
 from tests.test_ai_backend import database, ADMIN, USER
 from auth import cover_header
 from auto_task import management_agent as agent
-from auto_task.store import transaction, dumps, digest
-from auto_task.entities import AiResource
+from auto_task.store import transaction, dumps, digest, claim
+from auto_task.entities import AiResource, TaskJob
 from auto_task.resources import get_resource
 from server.management_agent import router
 
@@ -27,11 +27,14 @@ def create(c):
 
 def pending(sid, monkeypatch):
     value = {'method': 'GET', 'path': '/manage/contest/query', 'arguments': {'contestId': 432}, 'reason': '读取当前比赛，检查题号'}
-    runtime = SimpleNamespace(closed=False, calls={'call1': 99}, tool_reply=Mock())
-    monkeypatch.setitem(agent.RUNTIMES, sid, runtime)
+    from auto_task.configuration import ProviderConfig
+    monkeypatch.setattr(agent, 'provider', lambda s: (ProviderConfig(provider='codex', base_url='http://127.0.0.1:1/v1', model='test'), 'fixture'))
+    agent.start_turn(sid, ADMIN, 'fixture turn')
+    runtime = claim()
+    assert runtime and runtime['task_type'] == 'management.turn'
     with transaction() as s:
         row = s.query(AiResource).filter_by(id=sid).one()
-        data = json.loads(row.data); data['actions'] = [{'id': 'call1', 'hash': digest(value), 'status': 'pending', 'action': value}]
+        data = json.loads(row.data); data['actions'] = [{'id': 'call1', 'task_id': runtime['id'], 'hash': digest(value), 'status': 'pending', 'action': value}]
         row.data = dumps(data); row.state = 'approval'
     return value, runtime
 
@@ -63,7 +66,10 @@ def test_confirmation_is_exactly_once_and_uses_current_browser_cookie(database, 
     assert c.post(endpoint, json={'action_hash': digest(value), 'approve': True}).status_code == 409
     execute.assert_called_once()
     assert 'temporary' not in c.get('/management-agent/sessions/'+sid).text
-    runtime.tool_reply.assert_called_once()
+    # Confirmation persists a result; the remote task worker delivers it.
+    with transaction() as s:
+        data = json.loads(s.query(AiResource).filter_by(id=sid).one().data)
+        assert data['actions'][0]['result']['success']
 
 
 def test_rejection_never_executes_and_cannot_be_approved_later(database, monkeypatch):
@@ -79,7 +85,9 @@ def test_other_user_and_disconnected_runtime_cannot_confirm(database, monkeypatc
     c = client(); sid = create(c); value, runtime = pending(sid, monkeypatch)
     url = f'/management-agent/sessions/{sid}/actions/call1'; body = {'action_hash': digest(value), 'approve': True}
     assert client({**ADMIN, 'userId': 9876}).post(url, json=body).status_code == 404
-    runtime.closed = True
+    from datetime import datetime, timedelta
+    with transaction() as s:
+        s.query(TaskJob).filter_by(id=runtime['id']).update({'lease_until': datetime.utcnow()-timedelta(seconds=1)})
     assert c.get('/management-agent/sessions/'+sid).json()['data']['actions'][0]['status'] == 'expired'
     assert c.post(url, json=body).status_code == 409
 
@@ -102,7 +110,10 @@ def test_duplicate_contest_problems_and_modified_pending_payload_are_rejected(da
 
 def test_dynamic_tool_is_only_recorded_until_approval(database, monkeypatch):
     c = client(); sid = create(c)
-    runtime = object.__new__(agent.Agent); runtime.session_id = sid; runtime.calls = {}; runtime.send = Mock(); runtime.tool_reply = Mock()
+    _, job = pending(sid, monkeypatch)
+    with transaction() as s:
+        row = s.query(AiResource).filter_by(id=sid).one(); data = json.loads(row.data); data['actions'] = []; row.data = dumps(data)
+    runtime = object.__new__(agent.Agent); runtime.session_id = sid; runtime.job = job; runtime.calls = {}; runtime.send = Mock(); runtime.tool_reply = Mock()
     action = {'method': 'GET', 'path': '/manage/problem/list', 'arguments': {'pageNow': 1}, 'reason': '查询已有题目'}
     execute = Mock(); monkeypatch.setattr(agent, 'execute_action', execute)
     runtime.receive({'id': 5, 'method': 'item/tool/call', 'params': {'tool': 'oj_request', 'arguments': action}})
@@ -147,6 +158,9 @@ def test_real_app_server_tool_confirmation_loop(database, monkeypatch):
     try:
         r = c.post(f'/management-agent/sessions/{sid}/messages', json={'text': '查询题目列表，等待我在界面确认。'})
         assert r.status_code == 200, r.text
+        from auto_task.worker import run_once
+        worker = threading.Thread(target=run_once)
+        worker.start()
         deadline = time.monotonic()+30
         while time.monotonic() < deadline:
             data = c.get('/management-agent/sessions/'+sid).json()['data']
@@ -164,10 +178,180 @@ def test_real_app_server_tool_confirmation_loop(database, monkeypatch):
             if data['state'] == 'ready': break
             time.sleep(0.05)
         assert any('已收到确认' in e['text'] for e in data['events']), data
+        worker.join(timeout=10)
+        assert not worker.is_alive()
         assert len(model_calls) == 2
         assert {t.get('name') for t in model_calls[0].get('tools', [])} <= {'oj_request', 'request_user_input', 'update_plan', 'skills'}
     finally:
-        runtime = agent.runtime(sid)
-        if runtime: runtime.close()
-        agent.RUNTIMES.pop(sid, None)
+        agent.stop_turn(sid, ADMIN)
+        if 'worker' in locals(): worker.join(timeout=10)
         server.shutdown(); server.server_close()
+
+
+def configure(monkeypatch):
+    from auto_task.configuration import ProviderConfig
+    config = ProviderConfig(provider='codex', base_url='http://127.0.0.1:1/v1', model='fixture')
+    monkeypatch.setattr(agent, 'provider', lambda s: (config, 'local-fixture'))
+    return config
+
+
+def test_messages_are_durable_across_web_instances_without_starting_processes(database, monkeypatch):
+    configure(monkeypatch)
+    process = Mock(side_effect=AssertionError('Web must not create Agent processes'))
+    monkeypatch.setattr(agent, 'Agent', process)
+    first, second = client(), client()
+    sid = create(first)
+    assert first.post(f'/management-agent/sessions/{sid}/messages', json={'text': 'first turn'}).status_code == 200
+    assert second.get(f'/management-agent/sessions/{sid}').json()['data']['state'] == 'running'
+    assert second.post(f'/management-agent/sessions/{sid}/messages', json={'text': 'duplicate'}).status_code == 409
+    with transaction() as s:
+        job = s.query(TaskJob).one()
+        assert job.status == 'pending' and job.max_attempts == 1
+        job_id = job.id
+    process.assert_not_called()
+    assert second.post(f'/management-agent/sessions/{sid}/stop').status_code == 200
+    with transaction() as s:
+        assert s.query(TaskJob).filter_by(id=job_id).one().status == 'cancelled'
+    assert first.get(f'/management-agent/sessions/{sid}').json()['data']['state'] == 'ready'
+
+
+@pytest.mark.parametrize('kind,code', [('balance', 402), ('suspended', 403), ('unsettled', 409)])
+def test_management_uses_original_account_admission_rules(database, monkeypatch, kind, code):
+    from auto_task.store import account
+    from auto_task.entities import AiRun
+    configure(monkeypatch)
+    c = client(); sid = create(c)
+    with transaction() as s:
+        row = account(s, str(ADMIN['userId']), ADMIN['username'])
+        if kind == 'balance': row.balance = -1
+        if kind == 'suspended': row.status = 'suspended'
+    if kind == 'unsettled':
+        agent.start_turn(sid, ADMIN, 'previous')
+        with transaction() as s:
+            job = s.query(TaskJob).one(); job.status = 'failed'
+            s.add(AiRun(id='usage-unknown', task_id=job.id, attempt=1, model='fixture', status='unsettled', usage='{}'))
+    assert c.post(f'/management-agent/sessions/{sid}/messages', json={'text': 'new'}).status_code == code
+
+
+def test_management_fresh_admin_and_current_session_binding_are_mandatory_even_in_debug(database, monkeypatch):
+    from auto_task import access
+    from auto_task.store import LeaseLost
+    configure(monkeypatch)
+    c = client(); sid = create(c)
+    agent.start_turn(sid, ADMIN, 'turn')
+    job = claim()
+    fetch = Mock(return_value=dict(ADMIN))
+    monkeypatch.setattr(access, 'fetch_actor', fetch)
+    access.authorize_execution(job)
+    fetch.assert_called_once_with(str(ADMIN['userId']), fresh=True)
+    fetch.return_value = {**ADMIN, 'roles': ['user']}
+    with pytest.raises(LeaseLost): access.authorize_execution(job)
+    fetch.return_value = dict(ADMIN)
+    with pytest.raises(LeaseLost): access.authorize_execution({**job, 'payload': dumps({'session_id': 'other'})})
+    with transaction() as s:
+        row = s.query(AiResource).filter_by(id=sid).one(); data = json.loads(row.data); data['task_id'] = 'different-turn'; row.data = dumps(data)
+    with pytest.raises(LeaseLost): access.authorize_execution(job)
+
+
+def test_expired_management_lease_is_failed_without_replay_or_write_confirmation(database, monkeypatch):
+    from datetime import datetime, timedelta
+    c = client(); sid = create(c); action, job = pending(sid, monkeypatch)
+    with transaction() as s:
+        s.query(TaskJob).filter_by(id=job['id']).update({'lease_until': datetime.utcnow()-timedelta(seconds=1)})
+    assert claim() is None
+    with transaction() as s:
+        old = s.query(TaskJob).filter_by(id=job['id']).one()
+        assert old.status == 'failed' and old.attempt == 1
+    state = client().get(f'/management-agent/sessions/{sid}').json()['data']
+    assert state['state'] == 'disconnected' and state['actions'][0]['status'] == 'expired'
+    execute = Mock(); monkeypatch.setattr(agent, 'execute_action', execute)
+    assert c.post(f'/management-agent/sessions/{sid}/actions/call1', json={'action_hash': digest(action), 'approve': True}).status_code == 409
+    execute.assert_not_called()
+
+
+def test_worker_delivers_persisted_confirmation_from_another_web_instance(database, monkeypatch):
+    import threading
+    from auto_task.worker import run_once
+    configure(monkeypatch)
+    c = client(); other_web = client(); sid = create(c)
+    action = {'method': 'GET', 'path': '/manage/problem/list', 'arguments': {'pageNow': 1}, 'reason': '读取列表'}
+    executed = Mock(return_value={'success': True, 'response': {'code': 0}})
+    monkeypatch.setattr(agent, 'execute_action', executed)
+    original = agent.Agent
+    delivered = []
+    class FakeAgent:
+        receive = original.receive
+        mutate = original.mutate
+        def __init__(self, session_id, config, key, job):
+            self.session_id, self.job = session_id, job
+            self.calls = {}; self.finished = threading.Event(); self.outcome = 'failed'; self.thread_id = 'fixture-thread'
+        def start(self, data, text):
+            self.receive({'id': 31, 'method': 'item/tool/call', 'params': {'tool': 'oj_request', 'arguments': action}})
+            state = other_web.get(f'/management-agent/sessions/{sid}').json()['data']
+            assert state['state'] == 'approval'
+            call = state['actions'][-1]
+            response = other_web.post(f'/management-agent/sessions/{sid}/actions/{call["id"]}',
+                json={'action_hash': call['hash'], 'approve': True}, headers={'cookie': 'SESSION=current-request-only'})
+            assert response.status_code == 200
+        def tool_reply(self, rid, result):
+            delivered.append((rid, result)); self.outcome = 'success'; self.finished.set()
+        def close(self): pass
+    monkeypatch.setattr(agent, 'Agent', FakeAgent)
+    assert c.post(f'/management-agent/sessions/{sid}/messages', json={'text': 'read'}).status_code == 200
+    assert run_once()
+    assert delivered == [(31, {'success': True, 'response': {'code': 0}})]
+    executed.assert_called_once_with(action, 'SESSION=current-request-only')
+    with transaction() as s:
+        assert s.query(TaskJob).one().status == 'success'
+        assert 'current-request-only' not in s.query(AiResource).filter_by(id=sid).one().data
+        assert 'current-request-only' not in s.query(TaskJob).one().payload
+
+
+def test_uncertain_write_result_is_persisted_once_without_replay(database, monkeypatch):
+    c = client(); sid = create(c); action, _ = pending(sid, monkeypatch)
+    execute = Mock(side_effect=TimeoutError('Network lost after request'))
+    monkeypatch.setattr(agent, 'execute_action', execute)
+    endpoint = f'/management-agent/sessions/{sid}/actions/call1'
+    body = {'action_hash': digest(action), 'approve': True}
+    assert c.post(endpoint, json=body, headers={'cookie': 'SESSION=fresh'}).status_code == 200
+    assert client().get(f'/management-agent/sessions/{sid}').json()['data']['actions'][0]['status'] == 'unknown'
+    assert client().post(endpoint, json=body).status_code == 409
+    execute.assert_called_once()
+
+
+@pytest.mark.skipif(not __import__('os').environ.get('AUTOLAB_AI_TEST_DATABASE_URL'), reason='Requires isolated real MySQL row locks')
+def test_sixteen_web_processes_share_confirmation_state_without_runtime_routing(database, monkeypatch):
+    import multiprocessing
+    import os
+    c = client(); sid = create(c); action, _ = pending(sid, monkeypatch)
+    database.dispose()
+    context = multiprocessing.get_context('fork')
+    results = context.Queue()
+    def request_from_web(index):
+        # Each child gets a fresh pool; inherited active MySQL connections are never reused.
+        database.dispose(close=False)
+        agent.execute_action = lambda value, cookie: {'success': True, 'web_pid': os.getpid()}
+        try:
+            web = client()
+            state = web.get(f'/management-agent/sessions/{sid}').json()['data']['state']
+            response = web.post(f'/management-agent/sessions/{sid}/actions/call1',
+                json={'action_hash': digest(action), 'approve': True}, headers={'cookie': f'SESSION=worker-{index}'})
+            results.put((state, response.status_code))
+        except Exception as error:
+            results.put(('error', type(error).__name__))
+        finally: database.dispose()
+    children = [context.Process(target=request_from_web, args=(i,)) for i in range(16)]
+    try:
+        for child in children: child.start()
+        responses = [results.get(timeout=20) for _ in children]
+        for child in children:
+            child.join(timeout=5)
+            assert child.exitcode == 0
+        assert all(state in ('approval', 'running') for state, _ in responses), responses
+        assert [status for _, status in responses].count(200) == 1, responses
+        assert [status for _, status in responses].count(409) == 15, responses
+        assert c.get(f'/management-agent/sessions/{sid}').json()['data']['actions'][0]['status'] == 'completed'
+    finally:
+        for child in children:
+            if child.is_alive(): child.terminate(); child.join(timeout=5)
+        results.close(); results.join_thread()

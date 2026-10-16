@@ -1,5 +1,4 @@
 """Codex app-server bridge. OJ tools are inert until their owner approves the exact call."""
-import atexit
 import json
 import os
 import queue
@@ -13,9 +12,10 @@ from datetime import datetime
 import requests
 from fastapi import HTTPException
 from .configuration import provider, safe_path
-from .entities import AiResource, uid
+from .entities import AiResource, TaskJob, uid
 from .resources import require_admin
-from .store import transaction, dumps, digest, account, assert_active
+from .store import (transaction, dumps, digest, account, assert_active, submit,
+                    fenced, LeaseLost, TERMINAL, cancel)
 
 GUIDES = Path(__file__).with_name('management_guides')
 PRESETS = {'programming': '程序题命题', 'contest': '比赛维护', 'question_bank': '批量录题'}
@@ -52,8 +52,6 @@ TOOL = {'type': 'function', 'name': 'oj_request', 'description': '请求一次 O
     'path': {'type': 'string', 'enum': sorted({p for _, p in ENDPOINTS})},
     'arguments': {'type': 'object'}, 'reason': {'type': 'string'}},
     'required': ['method', 'path', 'arguments', 'reason'], 'additionalProperties': False}}
-RUNTIMES = {}
-RUNTIME_LOCK = threading.RLock()
 
 
 def owned(s, user, session_id, lock=False):
@@ -69,10 +67,13 @@ def view(row):
     return {'id': row.id, 'version': row.version, 'state': row.state, 'updated_at': row.updated_at.isoformat(), **json.loads(row.data)}
 
 
-def mutate(session_id, callback):
+def mutate(session_id, callback, job):
     with transaction() as s:
         row = s.query(AiResource).filter_by(id=session_id, kind='management_session').with_for_update().one()
         data = json.loads(row.data)
+        fenced(s, job["id"], job["lease_token"])
+        if data.get("task_id") != job["id"]:
+            raise LeaseLost("Management turn superseded")
         callback(row, data)
         row.data, row.version, row.updated_at = dumps(data), row.version + 1, datetime.utcnow()
 
@@ -115,13 +116,15 @@ def execute_action(action, cookie):
 
 
 class Agent:
-    def __init__(self, session_id, config, key):
-        self.session_id, self.config = session_id, config
+    def __init__(self, session_id, config, key, job):
+        self.session_id, self.config, self.job = session_id, config, job
+        self.finished = threading.Event()
+        self.outcome = "failed"
+        self.error = None
         self.lock, self.write_lock = threading.RLock(), threading.Lock()
         self.waiters, self.calls, self.counter = {}, {}, 0
         self.thread_id = self.turn_id = None
         self.timer = None
-        self.owner_id = None
         self.last_stream = 0
         self.streams = {}
         self.closed = False
@@ -151,6 +154,9 @@ class Agent:
         except Exception:
             self.close()
             raise
+
+    def mutate(self, callback):
+        mutate(self.session_id, callback, self.job)
 
     def send(self, message):
         with self.write_lock:
@@ -202,9 +208,9 @@ class Agent:
                     self.tool_reply(message['id'], {'success': False, 'message': error.detail}); return
                 aid = uid(); self.calls[aid] = message['id']
                 def pending(row, data):
-                    data.setdefault('actions', []).append({'id': aid, 'hash': digest(action), 'status': 'pending', 'action': action})
+                    data.setdefault('actions', []).append({'id': aid, 'task_id': self.job['id'], 'hash': digest(action), 'status': 'pending', 'action': action})
                     row.state = 'approval'
-                mutate(self.session_id, pending)
+                self.mutate(pending)
             else:
                 # Shell, file, network, permission requests and unknown tools cannot bypass OJ confirmation.
                 self.send({'id': message['id'], 'error': {'code': -32601, 'message': 'Only approved oj_request operations are supported'}})
@@ -217,140 +223,187 @@ class Agent:
             self.streams[item_id] = text
             if time.monotonic() - self.last_stream >= 0.5:
                 self.last_stream = time.monotonic()
-                mutate(self.session_id, lambda row, data: data.update(stream=text))
+                self.mutate(lambda row, data: data.update(stream=text))
         elif method == 'item/completed' and p.get('item', {}).get('type') == 'agentMessage':
             text = p['item'].get('text', '')
             def completed(row, data):
                 data['stream'] = ''
                 event(data, 'assistant', text)
-            mutate(self.session_id, completed)
+            self.mutate(completed)
         elif method == 'turn/plan/updated':
-            mutate(self.session_id, lambda row, data: data.update(plan=p.get('plan', [])))
+            self.mutate(lambda row, data: data.update(plan=p.get('plan', [])))
         elif method == 'turn/completed':
             self.turn_id = None
             if self.timer: self.timer.cancel()
-            def done(row, data):
-                row.state = 'ready'
-                data['stream'] = ''
-                error = p.get('turn', {}).get('error')
-                if error: event(data, 'error', str(error.get('message', 'Agent 执行失败')))
-            mutate(self.session_id, done)
+            turn = p.get('turn', {})
+            self.error = turn.get('error')
+            self.outcome = 'success' if turn.get('status') == 'completed' and not self.error else 'failed'
+            self.finished.set()
         elif method == 'error':
-            mutate(self.session_id, lambda row, data: event(data, 'error', str(p.get('error', {}).get('message', 'Agent 连接异常'))))
+            self.mutate(lambda row, data: event(data, 'error', str(p.get('error', {}).get('message', 'Agent 连接异常'))))
 
     def start(self, data, text):
         instructions = SYSTEM + '\n' + data['instructions'] + '\n允许的接口：\n' + dumps([{'method': m, 'path': p, 'description': d} for (m, p), d in ENDPOINTS.items()])
         if not self.thread_id:
-            params = {'cwd': str(self.work), 'approvalPolicy': 'on-request', 'sandbox': 'read-only',
+            params = {'cwd': str(self.work), 'model': self.config.model, 'approvalPolicy': 'on-request', 'sandbox': 'read-only',
                       'environments': [], 'developerInstructions': instructions}
             if data.get('thread_id'):
                 result = self.rpc('thread/resume', {**params, 'threadId': data['thread_id']})
             else:
                 result = self.rpc('thread/start', {**params, 'dynamicTools': [TOOL]})
             self.thread_id = result['thread']['id']
-            mutate(self.session_id, lambda row, value: value.update(thread_id=self.thread_id))
+            self.mutate(lambda row, value: value.update(thread_id=self.thread_id))
         self.timer = threading.Timer(self.config.timeout_seconds, self.close)
         self.timer.daemon = True; self.timer.start()
         self.rpc('turn/start', {'threadId': self.thread_id, 'input': [{'type': 'text', 'text': text}], 'environments': []})
 
     def close(self):
-        if self.closed: return
-        self.closed = True
+        with self.lock:
+            if self.closed: return
+            self.closed = True
+            self.finished.set()
         if self.timer: self.timer.cancel()
         if self.process.poll() is None:
             self.process.terminate()
             try: self.process.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 self.process.kill(); self.process.wait(timeout=3)
-        def stopped(row, data):
-            row.state = 'ready'
-            for action in data.get('actions', []):
-                if action['status'] == 'pending': action['status'] = 'expired'
-            event(data, 'system', 'Agent 已停止，未执行的确认已失效。')
-        try: mutate(self.session_id, stopped)
-        except Exception: pass
 
 
-def runtime(session_id):
-    agent = RUNTIMES.get(session_id)
-    return agent if agent and not agent.closed else None
+def active_task(s, row, data):
+    job = s.query(TaskJob).filter_by(id=data.get('task_id'), task_type='management.turn',
+                                    resource_id=row.id, owner_id=row.owner_id,
+                                    owner_username=row.owner_username).first()
+    if not job or job.status in TERMINAL:
+        return None
+    if job.status == 'running' and (not job.lease_until or job.lease_until <= datetime.utcnow()):
+        return None
+    return job
+
+
+def session_view(s, row):
+    result = view(row)
+    if row.state in ('running', 'approval') and not active_task(s, row, result):
+        result['state'] = 'disconnected'
+        for action in result.get('actions', []):
+            if action['status'] == 'pending': action['status'] = 'expired'
+            if action['status'] == 'executing': action['status'] = 'unknown'
+    return result
 
 
 def start_turn(session_id, user, text):
-    with RUNTIME_LOCK:
-        with transaction() as s:
-            row = owned(s, user, session_id, True)
-            data = json.loads(row.data)
-            if row.state in ('running', 'approval') and runtime(session_id):
-                raise HTTPException(409, '请先完成确认或停止当前执行')
-            if len(data.get('events', [])) >= 400:
-                raise HTTPException(409, '当前会话已达到记录上限，请新建会话')
-            assert_active(account(s, str(user['userId']), user['username']))
-            config, key = provider(s)
-            if config.provider != 'codex':
-                raise HTTPException(503, '智能管理需要配置 Codex / Responses 提供者')
-            if len(text.encode()) > config.max_prompt_bytes:
-                raise HTTPException(422, '消息超过模型输入限制')
-        # Do not hold a database row lock while starting a process: its exit handler
-        # must be able to persist the disconnected state immediately.
-        agent = runtime(session_id)
-        if not agent:
-            for existing in list(RUNTIMES.values()):
-                if not existing.closed and existing.owner_id == str(user['userId']) and not existing.turn_id:
-                    existing.close()
-            active = [a for a in RUNTIMES.values() if not a.closed]
-            if len(active) >= config.max_concurrency or sum(a.owner_id == str(user['userId']) for a in active) >= config.per_user_concurrency:
-                raise HTTPException(429, 'Agent 并发已满，请先停止其他会话')
-            agent = Agent(session_id, config, key)
-            agent.owner_id = str(user['userId'])
-            RUNTIMES[session_id] = agent
-        def started(row, value):
-            row.state = 'running'
-            value['stream'] = ''
-            for action in value.get('actions', []):
-                if action['status'] == 'pending' and action['id'] not in agent.calls:
-                    action['status'] = 'expired'
-            event(value, 'user', text)
-        mutate(session_id, started)
-        try:
-            agent.start(data, text)
-        except Exception:
-            agent.close()
-            raise
+    with transaction() as s:
+        row = owned(s, user, session_id, True)
+        data = json.loads(row.data)
+        previous = s.query(TaskJob).filter_by(id=data.get('task_id')).first()
+        if previous and previous.status not in TERMINAL:
+            raise HTTPException(409, '请先完成确认或停止当前执行')
+        if len(data.get('events', [])) >= 400:
+            raise HTTPException(409, '当前会话已达到记录上限，请新建会话')
+        config, key = provider(s)
+        if config.provider != 'codex':
+            raise HTTPException(503, '智能管理需要配置 Codex / Responses 提供者')
+        if len(text.encode()) > config.max_prompt_bytes:
+            raise HTTPException(422, '消息超过模型输入限制')
+        job = submit(s, user, 'management.turn', {'session_id': session_id, 'text': text}, uid(), row)
+        # Replaying a lost turn may repeat an already-confirmed write. Recovery is explicit.
+        job.max_attempts = 1
+        data['task_id'], data['stream'] = job.id, ''
+        for action in data.get('actions', []):
+            if action['status'] == 'pending': action['status'] = 'expired'
+            if action['status'] == 'executing': action['status'] = 'unknown'
+        event(data, 'user', text)
+        row.state, row.data = 'running', dumps(data)
+        row.version += 1
+        row.updated_at = datetime.utcnow()
+        return job.id
 
 
 def decide(session_id, user, action_id, action_hash, approve, cookie):
-    with RUNTIME_LOCK:
-        agent = runtime(session_id)
-        with transaction() as s:
-            row = owned(s, user, session_id, True); data = json.loads(row.data)
-            action = next((a for a in data.get('actions', []) if a['id'] == action_id), None)
-            if not action or action['hash'] != action_hash or digest(action['action']) != action_hash or action['status'] != 'pending':
-                raise HTTPException(409, '确认已失效或操作内容发生变化')
-            if not agent or action_id not in agent.calls:
-                raise HTTPException(409, 'Agent 已断开，请重新发起操作')
-            if approve: assert_active(account(s, str(user['userId']), user['username']))
-            action['status'] = 'executing' if approve else 'rejected'
-            action['actor'] = user['username']; action['decided_at'] = datetime.utcnow().isoformat()
-            row.data = dumps(data); row.version += 1
-        if approve:
-            try: output = execute_action(action['action'], cookie)
-            except Exception:
-                output = {'success': False, 'message': '请求异常，结果可能未确认。请读回核对，勿重复执行写操作。'}
-        else: output = {'success': False, 'message': '管理员拒绝本次操作，请停止该操作。'}
-        def finished(row, data):
-            current = next(a for a in data['actions'] if a['id'] == action_id)
-            current.update(status=('completed' if output['success'] else 'failed') if approve else 'rejected', result=output)
+    with transaction() as s:
+        row = owned(s, user, session_id, True)
+        data = json.loads(row.data)
+        job = active_task(s, row, data)
+        action = next((a for a in data.get('actions', []) if a['id'] == action_id), None)
+        if (not job or job.status != 'running' or not action or action.get('task_id') != job.id or
+                action['hash'] != action_hash or digest(action['action']) != action_hash or action['status'] != 'pending'):
+            raise HTTPException(409, '确认已失效或操作内容发生变化')
+        if approve: assert_active(account(s, str(user['userId']), user['username']))
+        action['status'] = 'executing' if approve else 'rejected'
+        action['actor'] = user['username']; action['decided_at'] = datetime.utcnow().isoformat()
+        row.data = dumps(data); row.version += 1
+        task_id = job.id
+    if approve:
+        try: output = execute_action(action['action'], cookie)
+        except Exception:
+            output = {'success': False, 'uncertain': True, 'message': '请求异常，结果可能未确认。请读回核对，勿重复执行写操作。'}
+    else: output = {'success': False, 'message': '管理员拒绝本次操作，请停止该操作。'}
+    # Persist the actual outcome even if stop/lease expiry occurred during the HTTP request.
+    # The cookie never enters task payloads, session JSON or logs.
+    with transaction() as s:
+        row = owned(s, user, session_id, True)
+        data = json.loads(row.data)
+        current = next(a for a in data['actions'] if a['id'] == action_id)
+        current.update(status=('unknown' if output.get('uncertain') else 'completed' if output['success'] else 'failed') if approve else 'rejected', result=output)
+        if data.get('task_id') == task_id and active_task(s, row, data):
             row.state = 'approval' if any(a['status'] == 'pending' for a in data['actions']) else 'running'
-        mutate(session_id, finished)
-        call_id = agent.calls.pop(action_id)
-        try:
-            agent.tool_reply(call_id, output)
-        except (BrokenPipeError, OSError, ValueError):
-            agent.close()
-        return output
+        row.data = dumps(data); row.version += 1; row.updated_at = datetime.utcnow()
+    return output
 
 
-@atexit.register
-def shutdown():
-    for agent in list(RUNTIMES.values()): agent.close()
+def stop_turn(session_id, user):
+    with transaction() as s:
+        row = owned(s, user, session_id, True)
+        data = json.loads(row.data)
+        job = s.query(TaskJob).filter_by(id=data.get('task_id'), task_type='management.turn',
+                                        resource_id=session_id, owner_id=row.owner_id).with_for_update().first()
+        if job: cancel(s, job, 'Management turn stopped by owner')
+        for action in data.get('actions', []):
+            if action['status'] == 'pending': action['status'] = 'expired'
+            if action['status'] == 'executing': action['status'] = 'unknown'
+        data['stream'] = ''
+        event(data, 'system', 'Agent 已停止，未执行的确认已失效。')
+        row.state, row.data = 'ready', dumps(data)
+        row.version += 1; row.updated_at = datetime.utcnow()
+
+
+def run_turn(ctx):
+    from .access import authorize_execution
+    authorize_execution(ctx.job)
+    session_id = ctx.job['resource_id']
+    with transaction() as s:
+        row = s.query(AiResource).filter_by(id=session_id, kind='management_session').one()
+        data = json.loads(row.data)
+        config, key = provider(s)
+        if config.provider != 'codex':
+            raise ValueError('Management requires Codex / Responses provider')
+    agent = None
+    try:
+        agent = Agent(session_id, config, key, ctx.job)
+        agent.start(data, json.loads(ctx.job['payload'])['text'])
+        while not agent.finished.wait(0.1):
+            ctx.check()
+            with transaction() as s:
+                row = s.query(AiResource).filter_by(id=session_id).one()
+                actions = json.loads(row.data).get('actions', [])
+            for action in actions:
+                if action.get('task_id') != ctx.job['id'] or action['id'] not in agent.calls:
+                    continue
+                if action.get('result') is not None:
+                    agent.tool_reply(agent.calls.pop(action['id']), action['result'])
+        ctx.check()
+        if agent.outcome != 'success':
+            raise RuntimeError('Management turn disconnected or failed')
+        return {'session_id': session_id, 'thread_id': agent.thread_id}, None
+    finally:
+        if agent: agent.close()
+        def finished(row, value):
+            row.state = 'ready'
+            value['stream'] = ''
+            for action in value.get('actions', []):
+                if action.get('task_id') == ctx.job['id']:
+                    if action['status'] == 'pending': action['status'] = 'expired'
+                    if action['status'] == 'executing': action['status'] = 'unknown'
+            if not agent or agent.outcome != 'success': event(value, 'error', 'Agent 已停止，未确认操作已失效。')
+        try: mutate(session_id, finished, ctx.job)
+        except LeaseLost: pass

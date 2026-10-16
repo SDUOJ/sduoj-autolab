@@ -84,6 +84,9 @@ def moderation(ctx, data, images, third_party=False):
 
 def handle(ctx):
     task_type = ctx.job["task_type"]
+    if task_type == "management.turn":
+        from .management_agent import run_turn
+        return run_turn(ctx)
     if task_type == "subjective_review":
         from .legacy_bridge import subjective
         return subjective(ctx)
