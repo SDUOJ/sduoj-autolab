@@ -1,6 +1,7 @@
 """Trusted Gateway boundary and execution-time OJ authorization."""
 
 import ipaddress
+import json
 import os
 
 import requests
@@ -91,7 +92,16 @@ def authorize_execution(job):
             if job.get("resource_id"):
                 row = get_resource(s, actor, job["resource_id"])
                 if row.kind != "interview":
-                    get_resource(s, actor, row.id, True)
+                    payload = json.loads(job.get("payload") or "{}")
+                    if job.get("task_type") == "question.extract" and payload.get("collaboration_grant"):
+                        from .native_bank import extraction_grant
+                        extraction_grant(s, actor, row, payload)
+                    else:
+                        get_resource(s, actor, row.id, True)
+                    if job.get("task_type") == "question.extract":
+                        from .native_bank import extraction_author
+                        from types import SimpleNamespace
+                        extraction_author(s, SimpleNamespace(**job), row, payload)
             elif job.get("psid"):
                 ps_access(s, actor, job["psid"], True)
     except HTTPException as error:

@@ -268,3 +268,27 @@ def test_revocation_also_stops_already_chained_question_tasks(collaboration_clie
     assert calls == []
     with store.transaction() as session:
         assert session.query(TaskJob).filter_by(task_type="question.solve").one().status == "failed"
+
+
+def test_fresh_identity_allows_only_current_contributor_intake_grant(collaboration_client, monkeypatch):
+    from auto_task.access import authorize_execution
+    client = collaboration_client
+    collection()
+    invite_and_accept(client)
+    response = client.post("/auto-task/ai/question-workflows/intake", json={
+        "collection_id": "shared", "title": "Authorized", "text": "FIFO?", "batch_id": "fresh-grant"})
+    assert response.status_code == 200, response.text
+    with store.transaction() as session:
+        row = session.query(TaskJob).get(response.json()["data"]["taskId"])
+        job = {column.name: getattr(row, column.name) for column in TaskJob.__table__.columns}
+        assert json.loads(job["payload"])["native_bank_owner"] == "7"
+    monkeypatch.setenv("AUTOLAB_AI_VALIDATE_IDENTITY", "1")
+    authorize_execution(job)
+    forged = {**job, "payload": store.dumps({**json.loads(job["payload"]), "collaboration_grant": {
+        "collection_id": "other-collection", "subject_id": "8"}})}
+    with pytest.raises(store.LeaseLost):
+        authorize_execution(forged)
+    as_user(client, ADMIN)
+    assert client.post("/auto-task/ai/collection-collaboration/shared/members/8/revoke").status_code == 200
+    with pytest.raises(store.LeaseLost):
+        authorize_execution(job)
