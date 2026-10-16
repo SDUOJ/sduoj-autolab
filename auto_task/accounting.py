@@ -21,7 +21,9 @@ def begin_run(job, config, prompt_bytes=0, require_balance=False):
             raise HTTPException(402, "Insufficient AI points")
         if has_unsettled_usage(s, job["payer_id"]):
             raise ValueError("AI usage reconciliation required")
-        reservation = (Decimal(prompt_bytes) * Decimal(str(config.input_usd_per_million))
+        input_ceiling = max(Decimal(str(config.input_usd_per_million)),
+                            Decimal(str(config.cached_usd_per_million)))
+        reservation = (Decimal(prompt_bytes) * input_ceiling
                        + Decimal(config.max_output_tokens) * Decimal(str(config.output_usd_per_million))) / Decimal(1000000)
         month = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         def total(query):
