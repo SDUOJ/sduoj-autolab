@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from .configuration import provider, safe_path
 from .entities import AiResource, TaskJob, uid
 from .resources import require_admin
+from .accounting import begin_run, settle_run
 from .store import (transaction, dumps, digest, account, assert_active, submit,
                     fenced, LeaseLost, TERMINAL, cancel)
 
@@ -121,6 +122,10 @@ class Agent:
         self.finished = threading.Event()
         self.outcome = "failed"
         self.error = None
+        self.usage_total = None
+        self.usage_baseline = None
+        self.usage_turn_id = None
+        self.usage_complete = True
         self.lock, self.write_lock = threading.RLock(), threading.Lock()
         self.waiters, self.calls, self.counter = {}, {}, 0
         self.thread_id = self.turn_id = None
@@ -147,7 +152,8 @@ class Agent:
         self.process = subprocess.Popen([binary, 'app-server', '--listen', 'stdio://'], cwd=work, env=env,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                         text=True, bufsize=1, start_new_session=True)
-        threading.Thread(target=self.read, daemon=True).start()
+        self.reader = threading.Thread(target=self.read, daemon=True)
+        self.reader.start()
         try:
             self.rpc('initialize', {'clientInfo': {'name': 'sduoj_management', 'version': '1.0'}, 'capabilities': {'experimentalApi': True}})
             self.send({'method': 'initialized', 'params': {}})
@@ -217,6 +223,19 @@ class Agent:
             return
         if method == 'turn/started':
             self.turn_id = p['turn']['id']
+            self.usage_turn_id = self.turn_id
+        elif method == 'thread/tokenUsage/updated':
+            if p.get('threadId') == self.thread_id and p.get('turnId') == self.usage_turn_id:
+                total = protocol_usage(p.get('tokenUsage', {}).get('total'))
+                previous = self.usage_total or self.usage_baseline
+                # The CLI repeats its previous counters when a provider response
+                # omits usage. Such a notification is not a complete measurement.
+                if (total is None or previous is None or
+                        any(total[key] < previous[key] for key in total) or
+                        total['input_tokens'] + total['output_tokens'] <=
+                        previous['input_tokens'] + previous['output_tokens']):
+                    self.usage_complete = False
+                self.usage_total = total
         elif method == 'item/agentMessage/delta':
             item_id = p.get('itemId', 'assistant')
             text = (self.streams.get(item_id, '') + p.get('delta', ''))[:60000]
@@ -243,6 +262,10 @@ class Agent:
             self.mutate(lambda row, data: event(data, 'error', str(p.get('error', {}).get('message', 'Agent 连接异常'))))
 
     def start(self, data, text):
+        # Older, unmetered sessions have no reliable baseline. Their first resumed
+        # turn is left unsettled instead of charging all historical usage again.
+        self.usage_baseline = data.get('usage_total') if data.get('thread_id') else {
+            'input_tokens': 0, 'cached_input_tokens': 0, 'output_tokens': 0}
         instructions = SYSTEM + '\n' + data['instructions'] + '\n允许的接口：\n' + dumps([{'method': m, 'path': p, 'description': d} for (m, p), d in ENDPOINTS.items()])
         if not self.thread_id:
             params = {'cwd': str(self.work), 'model': self.config.model, 'approvalPolicy': 'on-request', 'sandbox': 'read-only',
@@ -268,6 +291,7 @@ class Agent:
             try: self.process.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 self.process.kill(); self.process.wait(timeout=3)
+        if self.reader is not threading.current_thread(): self.reader.join(timeout=3)
 
 
 def active_task(s, row, data):
@@ -367,6 +391,40 @@ def stop_turn(session_id, user):
         row.version += 1; row.updated_at = datetime.utcnow()
 
 
+def protocol_usage(value):
+    """App-server ThreadTokenUsage.total counters; never infer missing usage as zero."""
+    if not isinstance(value, dict): return None
+    names = {'input_tokens': 'inputTokens', 'cached_input_tokens': 'cachedInputTokens',
+             'output_tokens': 'outputTokens'}
+    counts = {key: value.get(source) for key, source in names.items()}
+    if any(isinstance(n, bool) or not isinstance(n, int) or not 0 <= n <= 10**12 for n in counts.values()):
+        return None
+    if counts['cached_input_tokens'] > counts['input_tokens']: return None
+    return counts
+
+
+def usage_delta(total, baseline):
+    if not isinstance(total, dict) or not isinstance(baseline, dict): return {}
+    try:
+        delta = {key: total[key] - baseline[key] for key in ('input_tokens', 'cached_input_tokens', 'output_tokens')}
+    except (KeyError, TypeError): return {}
+    if any(isinstance(n, bool) or not isinstance(n, int) or n < 0 for n in delta.values()): return {}
+    if delta['cached_input_tokens'] > delta['input_tokens']: return {}
+    return delta
+
+
+def save_usage_baseline(session_id, job_id, thread_id, total):
+    if not total: return
+    with transaction() as s:
+        row = s.query(AiResource).filter_by(id=session_id, kind='management_session').with_for_update().one()
+        data = json.loads(row.data)
+        # A cancelled turn may still report real usage. Save only its own thread
+        # baseline, before settling and allowing the next paid turn to start.
+        if data.get('task_id') == job_id and data.get('thread_id') == thread_id:
+            data['usage_total'] = total
+            row.data = dumps(data); row.version += 1; row.updated_at = datetime.utcnow()
+
+
 def run_turn(ctx):
     from .access import authorize_execution
     authorize_execution(ctx.job)
@@ -377,6 +435,8 @@ def run_turn(ctx):
         config, key = provider(s)
         if config.provider != 'codex':
             raise ValueError('Management requires Codex / Responses provider')
+    run_id = begin_run(ctx.job, config, config.max_prompt_bytes)
+    status = 'failed'
     agent = None
     try:
         agent = Agent(session_id, config, key, ctx.job)
@@ -392,11 +452,25 @@ def run_turn(ctx):
                 if action.get('result') is not None:
                     agent.tool_reply(agent.calls.pop(action['id']), action['result'])
         ctx.check()
+        with transaction() as s: fenced(s, ctx.job['id'], ctx.job['lease_token'])
         if agent.outcome != 'success':
             raise RuntimeError('Management turn disconnected or failed')
+        status = 'success'
         return {'session_id': session_id, 'thread_id': agent.thread_id}, None
+    except LeaseLost:
+        status = 'cancelled'
+        raise
     finally:
         if agent: agent.close()
+        total = getattr(agent, 'usage_total', None)
+        baseline = getattr(agent, 'usage_baseline', None)
+        thread_id = getattr(agent, 'thread_id', None)
+        try:
+            save_usage_baseline(session_id, ctx.job['id'], thread_id, total)
+        finally:
+            usage = usage_delta(total, baseline) if status == 'success' and getattr(agent, 'usage_complete', False) else {
+                'observed_cumulative': total, 'baseline': baseline}
+            settle_run(run_id, usage, status, thread_id)
         def finished(row, value):
             row.state = 'ready'
             value['stream'] = ''

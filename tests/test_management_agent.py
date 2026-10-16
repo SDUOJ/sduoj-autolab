@@ -127,7 +127,8 @@ def test_dynamic_tool_is_only_recorded_until_approval(database, monkeypatch):
 
 
 @pytest.mark.skipif(__import__('os').environ.get('AUTOLAB_MANAGEMENT_PROTOCOL_TEST') != '1', reason='Opt-in real Codex CLI, local fake model only')
-def test_real_app_server_tool_confirmation_loop(database, monkeypatch):
+@pytest.mark.parametrize('scenario', ['complete', 'missing-final', 'resume'])
+def test_real_app_server_tool_confirmation_loop(database, monkeypatch, scenario):
     """Real CLI protocol + local deterministic Responses server; no paid model calls."""
     import threading
     import time
@@ -144,7 +145,10 @@ def test_real_app_server_tool_confirmation_loop(database, monkeypatch):
             tool = next((t.get('name') for t in payload.get('tools', []) if t.get('name', '').endswith('oj_request')), 'oj_request')
             item = {'type': 'function_call', 'id': 'fc_1', 'call_id': 'call_test', 'name': tool, 'arguments': dumps(action), 'status': 'completed'} if index == 1 else {'type': 'message', 'id': 'msg_1', 'role': 'assistant', 'status': 'completed', 'content': [{'type': 'output_text', 'text': '已收到确认并读取题目列表。', 'annotations': []}]}
             response = {'id': 'resp_'+str(index), 'object': 'response', 'created_at': 1789300000, 'model': 'test-model', 'status': 'in_progress', 'output': []}
-            events = [{'type': 'response.created', 'response': response}, {'type': 'response.output_item.added', 'output_index': 0, 'item': item}, {'type': 'response.output_item.done', 'output_index': 0, 'item': item}, {'type': 'response.completed', 'response': {**response, 'status': 'completed', 'output': [item], 'usage': {'input_tokens': 10, 'output_tokens': 10, 'total_tokens': 20}}}]
+            complete = {**response, 'status': 'completed', 'output': [item]}
+            if scenario != 'missing-final' or index != 2:
+                complete['usage'] = {'input_tokens': 10, 'output_tokens': 10, 'total_tokens': 20}
+            events = [{'type': 'response.created', 'response': response}, {'type': 'response.output_item.added', 'output_index': 0, 'item': item}, {'type': 'response.output_item.done', 'output_index': 0, 'item': item}, {'type': 'response.completed', 'response': complete}]
             self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.end_headers()
             for sequence, event in enumerate(events):
                 self.wfile.write(('data: '+dumps({**event, 'sequence_number': sequence})+'\n\n').encode()); self.wfile.flush()
@@ -152,6 +156,13 @@ def test_real_app_server_tool_confirmation_loop(database, monkeypatch):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     config = ProviderConfig(provider='codex', base_url=f'http://127.0.0.1:{server.server_port}/v1', model='test-model', timeout_seconds=60)
     monkeypatch.setattr(agent, 'provider', lambda s: (config, 'local-test-only'))
+    received = []
+    OriginalAgent = agent.Agent
+    class RecordingAgent(OriginalAgent):
+        def receive(self, message):
+            received.append(message)
+            return super().receive(message)
+    monkeypatch.setattr(agent, 'Agent', RecordingAgent)
     execute = Mock(return_value={'success': True, 'response': {'code': 0, 'data': {'rows': []}}})
     monkeypatch.setattr(agent, 'execute_action', execute)
     c = client(); sid = create(c)
@@ -181,6 +192,25 @@ def test_real_app_server_tool_confirmation_loop(database, monkeypatch):
         worker.join(timeout=10)
         assert not worker.is_alive()
         assert len(model_calls) == 2
+        from auto_task.entities import AiRun
+        with transaction() as s:
+            run = s.query(AiRun).one()
+            usage = json.loads(run.usage)
+            if scenario == 'missing-final':
+                assert run.status == 'unsettled', received
+            else:
+                assert run.status == 'success', received
+                assert usage['usage_complete'] is True, received
+                assert usage['input_tokens'] == 20 and usage['output_tokens'] == 20, received
+        if scenario == 'resume':
+            assert client().post(f'/management-agent/sessions/{sid}/messages', json={'text': '继续总结'}).status_code == 200
+            assert run_once()
+            with transaction() as s:
+                runs = s.query(AiRun).order_by(AiRun.created_at).all()
+                assert len(runs) == 2 and runs[1].status == 'success', received
+                resumed = json.loads(runs[1].usage)
+                assert resumed['input_tokens'] == 10 and resumed['output_tokens'] == 10, received
+            assert len(model_calls) == 3
         assert {t.get('name') for t in model_calls[0].get('tools', [])} <= {'oj_request', 'request_user_input', 'update_plan', 'skills'}
     finally:
         agent.stop_turn(sid, ADMIN)
@@ -355,3 +385,104 @@ def test_sixteen_web_processes_share_confirmation_state_without_runtime_routing(
         for child in children:
             if child.is_alive(): child.terminate(); child.join(timeout=5)
         results.close(); results.join_thread()
+
+
+def metered_agent(monkeypatch, total, fail=False, stop=False, on_start=None):
+    import threading
+    class Metered:
+        def __init__(self, session_id, config, key, job):
+            self.session_id, self.job, self.config = session_id, job, config
+            self.thread_id = 'metered-thread'
+            self.finished = threading.Event(); self.outcome = 'success'; self.calls = {}
+            self.usage_total = total
+            self.usage_baseline = None
+            self.usage_complete = True
+        def start(self, data, text):
+            self.usage_baseline = data.get('usage_total') if data.get('thread_id') else {
+                'input_tokens': 0, 'cached_input_tokens': 0, 'output_tokens': 0}
+            agent.mutate(self.session_id, lambda row, value: value.update(thread_id=self.thread_id), self.job)
+            if on_start: on_start(self)
+            if stop: agent.stop_turn(self.session_id, ADMIN)
+            if fail: raise RuntimeError('Protocol disconnected')
+            self.finished.set()
+        def close(self): pass
+    monkeypatch.setattr(agent, 'Agent', Metered)
+
+
+def test_management_usage_is_reserved_and_charged_once_using_saved_prices_and_turn_delta(database, monkeypatch):
+    from decimal import Decimal
+    from auto_task.entities import AiRun, AiLedger
+    from auto_task.accounting import settle_run
+    from auto_task.store import account
+    from auto_task.worker import run_once
+    config = configure(monkeypatch)
+    config.input_usd_per_million = 2; config.cached_usd_per_million = 1; config.output_usd_per_million = 4
+    c = client(); sid = create(c)
+    with transaction() as s: account(s, '7', 'teacher').balance = 100
+    total = {'input_tokens': 100, 'cached_input_tokens': 20, 'output_tokens': 50}
+    def check_intent(runtime):
+        with transaction() as s:
+            run = s.query(AiRun).one()
+            record = json.loads(run.usage)
+            assert run.status == 'running' and record['reserved_usd'] != '0'
+            assert record['pricing']['input'] == 2
+        # A later configuration change must not reprice an existing call.
+        config.input_usd_per_million = 99
+    metered_agent(monkeypatch, total, on_start=check_intent)
+    agent.start_turn(sid, ADMIN, 'first')
+    assert run_once()
+    with transaction() as s:
+        first = s.query(AiRun).one(); first_id = first.id
+        assert first.status == 'success' and first.cost_usd == Decimal('0.000380000')
+        assert s.query(AiLedger).count() == 1
+        assert account(s, '7').balance == Decimal('99.620000')
+    replay = settle_run(first_id, {'input_tokens': 9999, 'output_tokens': 9999}, 'success')
+    assert replay['replay']
+    config.input_usd_per_million = 2
+    metered_agent(monkeypatch, {'input_tokens': 150, 'cached_input_tokens': 25, 'output_tokens': 75})
+    agent.start_turn(sid, ADMIN, 'second')
+    assert run_once()
+    with transaction() as s:
+        runs = s.query(AiRun).order_by(AiRun.created_at).all()
+        assert len(runs) == 2 and s.query(AiLedger).count() == 2
+        assert runs[1].cost_usd == Decimal('0.000195000')
+        assert json.loads(runs[1].usage)['input_tokens'] == 50
+        assert account(s, '7').balance == Decimal('99.425000')
+
+
+@pytest.mark.parametrize('mode', ['missing', 'failed', 'cancelled', 'old-session'])
+def test_management_unknown_usage_remains_unsettled_and_blocks_new_paid_turns(database, monkeypatch, mode):
+    from auto_task.entities import AiRun, AiLedger
+    from auto_task.worker import run_once
+    configure(monkeypatch)
+    c = client(); sid = create(c)
+    if mode == 'old-session':
+        with transaction() as s:
+            row = s.query(AiResource).filter_by(id=sid).one(); data = json.loads(row.data)
+            data['thread_id'] = 'pre-accounting-thread'; row.data = dumps(data)
+    total = None if mode == 'missing' else {'input_tokens': 100, 'cached_input_tokens': 20, 'output_tokens': 50}
+    metered_agent(monkeypatch, total, fail=mode == 'failed', stop=mode == 'cancelled')
+    agent.start_turn(sid, ADMIN, 'first')
+    assert run_once()
+    with transaction() as s:
+        run = s.query(AiRun).one()
+        assert run.status == 'unsettled' and json.loads(run.usage)['usage_complete'] is False
+        assert s.query(AiLedger).count() == 0
+    assert c.post(f'/management-agent/sessions/{sid}/messages', json={'text': 'retry'}).status_code == 409
+
+
+@pytest.mark.parametrize('value', [None, {}, {'inputTokens': 5, 'outputTokens': 2},
+    {'inputTokens': True, 'cachedInputTokens': 0, 'outputTokens': 2},
+    {'inputTokens': 5, 'cachedInputTokens': 6, 'outputTokens': 2},
+    {'inputTokens': -1, 'cachedInputTokens': 0, 'outputTokens': 2}])
+def test_protocol_missing_or_invalid_usage_is_not_zero_usage(value):
+    assert agent.protocol_usage(value) is None
+    assert agent.usage_delta(agent.protocol_usage(value), {'input_tokens': 0, 'cached_input_tokens': 0, 'output_tokens': 0}) == {}
+
+
+def test_protocol_usage_requires_monotonic_counters_and_valid_cache_delta():
+    assert agent.protocol_usage({'inputTokens': 100, 'cachedInputTokens': 25, 'outputTokens': 50}) == {
+        'input_tokens': 100, 'cached_input_tokens': 25, 'output_tokens': 50}
+    base = {'input_tokens': 100, 'cached_input_tokens': 20, 'output_tokens': 50}
+    assert agent.usage_delta({'input_tokens': 90, 'cached_input_tokens': 20, 'output_tokens': 60}, base) == {}
+    assert agent.usage_delta({'input_tokens': 101, 'cached_input_tokens': 25, 'output_tokens': 60}, base) == {}
