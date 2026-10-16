@@ -243,6 +243,10 @@ def apply_result(session, job, result, version):
         data.pop("publication_plan", None)
         data.pop("publication_hash", None)
     if task_type == "question.extract":
+        # Check the still-open assignment before writing results or completing
+        # it. Reuse the verified owner for native persistence below.
+        from .native_bank import extraction_author
+        native_owner = extraction_author(session, job, row, payload)
         for value in result.get("_generated_files", []):
             session.add(AiFile(owner_id=job.owner_id, resource_id=row.id, **value))
         ids, records, new_questions = [], [], []
@@ -318,8 +322,6 @@ def apply_result(session, job, result, version):
         from .native_bank import save_batch
         native_rows = [session.query(AiResource).filter_by(id=question_id).one() for question_id in ids]
         supported = [item for item in native_rows if json.loads(item.data).get("question_type") != "programming"]
-        from .native_bank import extraction_author
-        native_owner = extraction_author(session, job, row, payload)
         if supported and native_owner is not None:
             saved = save_batch(session, native_owner,
                                str(data.get("title") or "题目录入批次"), str(payload.get("batch_id") or job.id),
