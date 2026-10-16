@@ -3,6 +3,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import fix_subjective_judgelog_names as repair
 
@@ -33,6 +34,14 @@ class SubjectiveRepairTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--commit", result.stdout)
         self.assertIn("default dry-run", result.stdout)
+
+    def test_current_answer_update_is_a_separate_explicit_commit_option(self):
+        with patch.object(sys, "argv", ["repair", "--group-id", "1", "--commit"]):
+            self.assertFalse(repair.parse_args().update_current_answer)
+        with patch.object(sys, "argv", ["repair", "--group-id", "1", "--update-current-answer"]):
+            with self.assertRaises(SystemExit) as failure:
+                repair.parse_args()
+            self.assertEqual(failure.exception.code, 2)
 
 
 if __name__ == "__main__":

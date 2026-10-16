@@ -6,9 +6,8 @@ Workflow (by groupId):
 2. Parse latest `tag=result` JSON and all `tag=log` entries that contain `<schema>...</schema>` + `judgeLog`.
 3. Compare result judgeLog names against the best matched schema-log candidate.
 4. If inconsistent, remap by maximum string matching and rebuild corrected `result.judgeLog`.
-5. Optionally write back:
-   - auto_task_run_log(tag=result) content
-   - problem_set_answer_sheet_detail.judgeLog (score fix)
+5. With --commit, repair the historical result log only. Current AUTO answers
+   require --update-current-answer and a matching latest-run/result snapshot.
 6. Report ONLY mismatch-related items (ignore consistent ones).
 """
 
@@ -71,16 +70,20 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--username", type=str, help="Only process one username")
     parser.add_argument("--task-id", type=str, action="append", help="Only process specific task id (repeatable)")
-    parser.add_argument("--only-auto", action="store_true", help="Only process answer sheets locked by <AUTO>")
+    parser.add_argument("--only-auto", action="store_true", help="Only select tasks whose answer sheet is locked by <AUTO>")
     parser.add_argument("--min-similarity", type=float, default=0.70, help="Minimum matching similarity (0~1)")
     parser.add_argument("--limit", type=int, default=0, help="Max runs to scan, 0 means no limit")
     parser.add_argument("--commit", action="store_true", help="Persist fixes to DB (default dry-run)")
+    parser.add_argument("--update-current-answer", action="store_true",
+                        help="With --commit, also repair a matching current AUTO answer; stale or human grades are skipped")
     parser.add_argument("--report", type=str, default=f"judge_log_fix_report_{now}.jsonl", help="Mismatch report path")
     args = parser.parse_args()
     if not 0 <= args.min_similarity <= 1:
         parser.error("--min-similarity must be in 0..1")
     if args.limit < 0 or any(group <= 0 for group in args.group_id):
         parser.error("group IDs must be positive and --limit must be non-negative")
+    if args.update_current_answer and not args.commit:
+        parser.error("--update-current-answer requires --commit; preview historical mismatches first")
     return args
 
 
@@ -351,6 +354,7 @@ def _load_target_tasks(session, args: argparse.Namespace) -> List[AutoTaskRun]:
 
     q = session.query(AutoTaskRun).filter(
         AutoTaskRun.task_type == "subjective_review",
+        AutoTaskRun.status == "success",
         AutoTaskRun.groupId.in_(args.group_id),
     ).order_by(AutoTaskRun.id.asc())
 
@@ -384,7 +388,7 @@ def _load_task_logs(session, task_ids: List[str]) -> Dict[str, List[AutoTaskRunL
     return bucket
 
 
-def _find_answer_detail(session, psid: int, username: str, gid: int, pid: int):
+def _find_answer_detail(session, psid: int, username: str, gid: int, pid: int, lock=False):
     from db import ProblemSetAnswerSheet, ProblemSetAnswerSheetDetail
 
     as_row = (
@@ -397,16 +401,17 @@ def _find_answer_detail(session, psid: int, username: str, gid: int, pid: int):
     )
     if as_row is None:
         return None
-    detail = (
+    query = (
         session.query(ProblemSetAnswerSheetDetail)
         .filter(
             ProblemSetAnswerSheetDetail.asid == as_row.asid,
             ProblemSetAnswerSheetDetail.gid == gid,
             ProblemSetAnswerSheetDetail.pid == pid,
         )
-        .first()
     )
-    return detail
+    if lock:
+        query = query.populate_existing().with_for_update()
+    return query.first()
 
 
 def _extract_payload_fields(run: AutoTaskRun, payload: Dict[str, Any]) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[str]]:
@@ -436,6 +441,110 @@ def _extract_payload_fields(run: AutoTaskRun, payload: Dict[str, Any]) -> Tuple[
     return psid, gid, pid, username
 
 
+class RepairConflict(RuntimeError):
+    """The scanned task/result changed before this repair transaction."""
+
+
+def _latest_answer_run(session, identity):
+    """Read all matching task identities, including runs outside CLI filters."""
+    from db import AutoTaskRun, AutoTaskRunLog
+
+    psid, gid, pid, username = identity
+    runs = session.query(AutoTaskRun).filter(
+        AutoTaskRun.task_type == "subjective_review",
+        AutoTaskRun.psid == psid, AutoTaskRun.username == username,
+    ).order_by(AutoTaskRun.id).populate_existing().with_for_update().all()
+    matches = []
+    for other in runs:
+        payload_log = session.query(AutoTaskRunLog).filter_by(
+            task_id=other.id, tag="payload",
+        ).order_by(AutoTaskRunLog.log_id).first()
+        payload = _try_parse_json(payload_log.content) if payload_log else None
+        # Missing identities cannot establish that the other run is unrelated.
+        if payload is None:
+            return None
+        if _extract_payload_fields(other, payload) != identity:
+            continue
+        if other.status in {"pending", "running", "blocked", "retrying"}:
+            return None
+        if other.status == "success":
+            if other.create_time is None:
+                return None
+            matches.append(other)
+    if not matches:
+        return None
+    latest = max(matches, key=lambda item: (item.end_time or item.create_time, item.create_time, item.id))
+    return latest.id
+
+
+def _repair_current_answer(session, run, original, corrected):
+    from db import AutoTaskRunLog, ProblemSetAnswerSheetDetail
+
+    payload_log = session.query(AutoTaskRunLog).filter_by(
+        task_id=run.id, tag="payload",
+    ).order_by(AutoTaskRunLog.log_id).first()
+    payload = _try_parse_json(payload_log.content) if payload_log else None
+    if payload is None:
+        return "missing-payload"
+    identity = _extract_payload_fields(run, payload)
+    psid, gid, pid, username = identity
+    if (not all(value is not None and value > 0 for value in (psid, gid, pid)) or not username
+            or run.psid != psid or run.username != username
+            or (run.problemId is not None and run.problemId != pid)):
+        return "unproven-answer-identity"
+    detail = _find_answer_detail(session, psid, username, gid, pid, lock=True)
+    if detail is None:
+        return "missing-answer"
+    if detail.judgeLock_username != "<AUTO>":
+        return "human-or-unlocked-answer"
+    # New grading candidates require teacher adoption through the normal API.
+    if original.get("candidate"):
+        return "candidate-requires-adoption"
+    if _latest_answer_run(session, identity) != run.id:
+        return "not-latest-completed-run"
+    try:
+        current_rows = json.loads(detail.judgeLog)
+    except (TypeError, ValueError):
+        return "answer-snapshot-differs"
+    if (current_rows != original.get("judgeLog")
+            or detail.judgeComment != original.get("judgeComment")):
+        return "answer-snapshot-differs"
+    changed = session.query(ProblemSetAnswerSheetDetail).filter(
+        ProblemSetAnswerSheetDetail.asd_id == detail.asd_id,
+        ProblemSetAnswerSheetDetail.judgeLock_username == "<AUTO>",
+        ProblemSetAnswerSheetDetail.judgeLog == detail.judgeLog,
+        ProblemSetAnswerSheetDetail.judgeComment == detail.judgeComment,
+    ).update({"judgeLog": json.dumps(corrected["judgeLog"], ensure_ascii=False),
+              "judgeComment": corrected.get("judgeComment")}, synchronize_session=False)
+    if changed != 1:
+        raise RepairConflict("Current answer changed during repair")
+    return "updated"
+
+
+def apply_repair(session, task_id, log_id, original_content, corrected, update_current_answer=False):
+    """Caller commits one transaction; any log/answer CAS conflict rolls it back."""
+    from db import AutoTaskRun, AutoTaskRunLog
+
+    run = session.query(AutoTaskRun).filter_by(id=task_id).populate_existing().with_for_update().one_or_none()
+    if run is None or run.status != "success":
+        raise RepairConflict("Task is no longer completed")
+    result = session.query(AutoTaskRunLog).filter_by(task_id=task_id, tag="result").order_by(
+        AutoTaskRunLog.log_id.desc(),
+    ).populate_existing().with_for_update().first()
+    if result is None or result.log_id != log_id or result.content != original_content:
+        raise RepairConflict("Result log changed after preview")
+    original = _try_parse_json(original_content)
+    if original is None:
+        raise RepairConflict("Original result is invalid")
+    answer = _repair_current_answer(session, run, original, corrected) if update_current_answer else "not-requested"
+    changed = session.query(AutoTaskRunLog).filter_by(log_id=log_id, task_id=task_id, tag="result").filter(
+        AutoTaskRunLog.content == original_content,
+    ).update({"content": json.dumps(corrected, ensure_ascii=False)}, synchronize_session=False)
+    if changed != 1:
+        raise RepairConflict("Result log changed during repair")
+    return {"history": "updated", "answer": answer}
+
+
 def main() -> int:
     args = parse_args()
 
@@ -450,6 +559,7 @@ def main() -> int:
     scanned = 0
     mismatch = 0
     updated = 0
+    answer_updated = 0
     skipped = 0
 
     try:
@@ -548,27 +658,24 @@ def main() -> int:
 
                 mismatch += 1
 
+                repair = {"history": "preview", "answer": "not-requested"}
                 if args.commit:
-                    # 1) rewrite latest existing result log content
-                    result_log.content = json.dumps(corrected_payload, ensure_ascii=False)
-
-                    # 2) answer sheet writeback: keep existing script behavior
-                    if answer_detail is not None:
-                        answer_detail.judgeLog = json.dumps(
-                            corrected_payload.get("judgeLog", []),
-                            ensure_ascii=False,
-                        )
-                        answer_detail.judgeComment = str(
-                            corrected_payload.get("judgeComment", answer_detail.judgeComment or "")
-                        )
-
-                    session.commit()
-                    updated += 1
+                    # Keep the scan session read-only. Refresh and compare each result
+                    # in a separate transaction rather than flushing scanned ORM rows.
+                    try:
+                        with Session.begin() as write_session:
+                            repair = apply_repair(write_session, task_id, result_log.log_id,
+                                                  result_log.content, corrected_payload,
+                                                  args.update_current_answer)
+                        updated += 1
+                        answer_updated += repair["answer"] == "updated"
+                    except RepairConflict as error:
+                        repair = {"history": "conflict", "answer": "not-written", "reason": str(error)}
 
                 fp.write(
                     json.dumps(
                         {
-                            "status": "updated" if args.commit else "dry_run_mismatch",
+                            "status": repair["history"] if args.commit else "dry_run_mismatch",
                             "task_id": task_id,
                             "groupId": run.groupId,
                             "psid": psid,
@@ -578,7 +685,9 @@ def main() -> int:
                             "schema_log_candidates": len(schema_candidates),
                             "log_id": selected_cand.log.log_id,
                             "result_log_id": result_log.log_id,
-                            "write_mode": ("rewrite_existing_result_log_and_keep_answer_sheet_logic" if args.commit else "dry_run"),
+                            "write_mode": ("historical_log_and_matching_auto_answer" if args.update_current_answer
+                                           else "historical_log_only") if args.commit else "dry_run",
+                            "repair": repair,
                             "inconsistent_items": inconsistent_items,
                         },
                         ensure_ascii=False,
@@ -587,14 +696,14 @@ def main() -> int:
                 )
 
                 print(
-                    f"[{'updated' if args.commit else 'dry-run'}] "
+                    f"[{repair['history'] if args.commit else 'dry-run'}] "
                     f"task={task_id} groupId={run.groupId} psid={psid} user={username} "
                     f"inconsistent={len(inconsistent_items)}"
                 )
 
         print("=" * 72)
         print(
-            f"Done. scanned={scanned}, mismatch={mismatch}, updated={updated}, skipped={skipped}, "
+            f"Done. scanned={scanned}, mismatch={mismatch}, updated={updated}, answer_updated={answer_updated}, skipped={skipped}, "
             f"mode={'commit' if args.commit else 'dry-run'}"
         )
         print(f"Report written to: {args.report}")
