@@ -904,7 +904,7 @@ def test_pptx_slides_are_ordered_and_not_flattened(tmp_path):
             archive.writestr("ppt/slides/slide%d.xml" % number,
                             '<p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:t>Slide %d</a:t></p>' % number)
     pages = extract_document(path, SimpleNamespace(check=lambda: None))
-    assert [page["page"] for page in pages] == [1, 2, 10]
+    assert [page["page"] for page in pages] == [1, 2, 3]
     assert pages[-1]["text"] == "Slide 10"
 
 
@@ -917,10 +917,11 @@ def test_pptx_uses_presentation_relationship_order(tmp_path):
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("ppt/slides/slide10.xml", '<p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:t>Deck first</a:t></p>')
         archive.writestr("ppt/slides/slide2.xml", '<p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:t>Deck second</a:t></p>')
-        archive.writestr("ppt/presentation.xml", '<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="1" r:id="rId2"/><p:sldId id="2" r:id="rId1"/></p:sldIdLst></p:presentation>')
+        archive.writestr("ppt/presentation.xml", '<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rId1"/><p:sldId id="257" r:id="rId2"/></p:sldIdLst></p:presentation>')
         archive.writestr("ppt/_rels/presentation.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="slides/slide10.xml"/><Relationship Id="rId2" Target="slides/slide2.xml"/></Relationships>')
     pages = extract_document(path, SimpleNamespace(check=lambda: None))
-    assert [page["text"] for page in pages] == ["Deck second", "Deck first"]
+    assert [page["text"] for page in pages] == ["Deck first", "Deck second"]
+    assert [page["page"] for page in pages] == [1, 2]
 
 
 def test_docx_explicit_page_breaks_preserve_logical_page_numbers(tmp_path):

@@ -93,21 +93,23 @@ def extract_document(path, ctx):
                 for slide_id in presentation_root.iter():
                     if slide_id.tag.rsplit("}", 1)[-1] != "sldId":
                         continue
-                    relation_id = next((value for key, value in slide_id.attrib.items() if key.rsplit("}", 1)[-1] == "id"), None)
+                    relation_id = slide_id.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+                    if relation_id is None:
+                        relation_id = slide_id.get("{http://purl.oclc.org/ooxml/officeDocument/relationships}id")
                     if relation_id in relation_targets:
                         slides.append(relation_targets[relation_id])
             slides.extend(sorted(available - set(slides), key=lambda name: int(re.search(r"slide(\d+)\.xml", name).group(1))))
             if len(slides) > 500:
                 raise ValueError("Presentation exceeds 500 slides")
             result = []
-            for name in slides:
+            for page_number, name in enumerate(slides, 1):
                 ctx.check()
                 raw = archive.read(name)
                 if b"<!" in raw:
                     raise ValueError("Presentation XML declarations are not allowed")
                 root = ET.fromstring(raw)
                 value = "\n".join(node.text or "" for node in root.iter("{http://schemas.openxmlformats.org/drawingml/2006/main}t"))
-                result.append({"page": int(re.search(r"slide(\d+)\.xml", name).group(1)), "text": value})
+                result.append({"page": page_number, "text": value})
             return result
     if suffix == ".pdf":
         import fitz
