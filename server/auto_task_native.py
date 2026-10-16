@@ -75,11 +75,11 @@ class NativePlagiarismCreate(BaseModel):
     pid: int
     operation_key: str = Field(..., min_length=1, max_length=96)
     title: str = Field("OJ programming plagiarism", min_length=1, max_length=128)
-    language: str = Field("cpp", pattern="^(c|cpp|python|java)$")
+    language: str = Field("cpp", regex="^(c|cpp|python|java)$")
     threshold: float = Field(0.7, ge=0, le=1)
     # A student contributes one immutable submission to a scan. "latest" is
     # the default and "best" picks the highest judged score, then latest time.
-    selection_policy: str = Field("latest", pattern="^(latest|best)$")
+    selection_policy: str = Field("latest", regex="^(latest|best)$")
 
 
 def _submission_ids(answer):

@@ -22,7 +22,7 @@ router = APIRouter(prefix="/collection-collaboration", tags=["auto-task-collabor
 class MemberInvite(BaseModel):
     subject_id: str = Field(..., min_length=1, max_length=64)
     username: str = Field(..., min_length=1, max_length=100)
-    role: str = Field(..., pattern=r"^(viewer|contributor|editor)$")
+    role: str = Field(..., regex=r"^(viewer|contributor|editor)$")
     course_id: Optional[int] = Field(None, ge=1)
 
 

@@ -37,7 +37,7 @@ class IntakeRequest(BaseModel):
 
 class FollowupRequest(BaseModel):
     operation_key: str = Field(..., min_length=1, max_length=128)
-    task_type: str = Field(..., pattern=r"^(question\.solve|question\.verify|question\.chat)$")
+    task_type: str = Field(..., regex=r"^(question\.solve|question\.verify|question\.chat)$")
     message: Optional[str] = Field(None, max_length=20000)
 
 

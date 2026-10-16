@@ -26,7 +26,7 @@ router = APIRouter()
 
 
 class AccountAccessChange(BaseModel):
-    subject_id: str = Field(..., pattern=r"^[1-9][0-9]*$", max_length=64)
+    subject_id: str = Field(..., regex=r"^[1-9][0-9]*$", max_length=64)
     suspended: bool
     operation_key: str = Field(..., min_length=1, max_length=96)
     reason: str = Field(..., min_length=1, max_length=2000)

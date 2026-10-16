@@ -44,7 +44,7 @@ class NativeSource(BaseModel):
 
 class InvitationCreate(BaseModel):
     operation_key: str = Field(..., min_length=1, max_length=96)
-    student_id: str = Field(..., pattern=r"^[1-9][0-9]*$")
+    student_id: str = Field(..., regex=r"^[1-9][0-9]*$")
     student_username: str = Field(..., min_length=1, max_length=100)
     title: str = Field(..., min_length=1, max_length=200)
     question: str = Field("", max_length=200000)
@@ -83,7 +83,7 @@ class MediaAttach(BaseModel):
     segment_count: int = Field(..., ge=1, le=1000)
     started_ms: int = Field(0, ge=0)
     duration_ms: int = Field(..., gt=0, le=60 * 60 * 1000)
-    sha256: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    sha256: str = Field(..., regex=r"^[0-9a-f]{64}$")
 
 
 class InterviewResponse(BaseModel):
