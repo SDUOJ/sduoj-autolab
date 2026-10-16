@@ -473,8 +473,10 @@ def _latest_answer_run(session, identity):
             matches.append(other)
     if not matches:
         return None
-    latest = max(matches, key=lambda item: (item.end_time or item.create_time, item.create_time, item.id))
-    return latest.id
+    latest_time = max((item.end_time or item.create_time, item.create_time) for item in matches)
+    latest = [item for item in matches if (item.end_time or item.create_time, item.create_time) == latest_time]
+    # Random task IDs cannot establish chronology when persisted timestamps tie.
+    return latest[0].id if len(latest) == 1 else None
 
 
 def _repair_current_answer(session, run, original, corrected):

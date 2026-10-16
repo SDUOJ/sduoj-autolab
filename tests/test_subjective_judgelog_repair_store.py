@@ -240,3 +240,34 @@ def test_main_report_covers_every_written_score_including_exact_names_and_clamps
     actual = [(i, old["jScore"], new["jScore"]) for i, (old, new) in
               enumerate(zip(original["judgeLog"], history["judgeLog"])) if old["jScore"] != new["jScore"]]
     assert actual == (reported if commit else [])
+
+
+@pytest.mark.parametrize("other_id", ["aaa-later", "zzz-later"])
+def test_main_preserves_current_answer_when_latest_run_timestamps_tie(database, monkeypatch, tmp_path, other_id):
+    factory, engine = database
+    original = payload(2)
+    original["judgeLog"][0]["name"] = "Criterion A (reworded)"
+    with factory.begin() as session:
+        session.query(AutoTaskRunLog).get(2).content = json.dumps(original)
+        session.query(ProblemSetAnswerSheetDetail).one().judgeLog = json.dumps(original["judgeLog"])
+        session.add(AutoTaskRunLog(log_id=3, task_id="old", tag="log",
+                    content="<schema>" + json.dumps(payload(7)) + "</schema>"))
+        now = datetime(2026, 10, 16)
+        session.add(AutoTaskRun(id=other_id, task_type="subjective_review", psid=1, username="alice",
+                    groupId=100, problemId=3, status="success", create_time=now, end_time=now))
+        session.add(AutoTaskRunLog(log_id=4, task_id=other_id, tag="payload",
+                    content=json.dumps({"psid": 1, "gid": 2, "pid": 3, "username": "alice"})))
+        session.add(AutoTaskRunLog(log_id=5, task_id=other_id, tag="result", content=json.dumps(original)))
+    report = tmp_path / "tied-latest.jsonl"
+    monkeypatch.setattr(repair, "parse_args", lambda: SimpleNamespace(
+        group_id=[100], username=None, task_id=["old"], limit=0, only_auto=False,
+        min_similarity=0.7, commit=True, update_current_answer=True, report=str(report)))
+    monkeypatch.setattr("sqlalchemy.create_engine", lambda *args, **kwargs: engine)
+    assert repair.main() == 0
+    history, answer, _ = state(factory)
+    assert history["judgeLog"][0]["jScore"] == 7
+    assert answer == original["judgeLog"]
+    with factory() as session:
+        assert json.loads(session.query(AutoTaskRunLog).get(5).content) == original
+    record = json.loads(report.read_text())
+    assert record["repair"] == {"history": "updated", "answer": "not-latest-completed-run"}
