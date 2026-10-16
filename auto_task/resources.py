@@ -58,7 +58,9 @@ def get_resource(session, user, resource_id, write=False, include_deleted=False)
     native = json.loads(row.data).get("native")
     if isinstance(native, dict) and native.get("group_id"):
         group = session.query(ProblemGroup).filter_by(gid=native["group_id"]).first()
-        if not group or not ("superadmin" in (user.get("roles") or []) or group.username == user["username"] or group.manageGroupId in (user.get("groups") or [])):
+        managed = group and ("superadmin" in (user.get("roles") or []) or group.username == user["username"] or group.manageGroupId in (user.get("groups") or []))
+        from .collection_access import native_question_permission
+        if not group or not (managed or native_question_permission(session, row, user, native, group, write)):
             raise HTTPException(403, "Native source group access revoked")
         if not any(str(item.get("pid")) == str(native.get("pid")) for item in json.loads(group.problemInfo)):
             raise HTTPException(403, "Native source removed from authorized group")

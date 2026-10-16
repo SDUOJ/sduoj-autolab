@@ -238,6 +238,16 @@ def apply_result(session, job, result, version):
             raise ValueError("Native question changed while task was running")
     task_type = job.task_type
     payload = json.loads(getattr(job, "payload", "{}") or "{}")
+    if row.kind == "question" and data.get("native") and row.parent_id and task_type in ("question.solve", "question.verify"):
+        # Recheck delegated native writes in this result transaction as well as
+        # before model execution; an old snapshot cannot carry a revoked grant.
+        from .access import fetch_actor
+        from .resources import get_resource, principal
+        from fastapi import HTTPException
+        actor = fetch_actor(job.owner_id, fresh=True)
+        if principal(actor) != job.owner_id or actor["username"] != job.owner_username:
+            raise HTTPException(403, "Question task identity changed")
+        get_resource(session, actor, row.id, True)
     chain = []
     if task_type == "exam.plan":
         data.pop("publication_plan", None)
@@ -332,11 +342,15 @@ def apply_result(session, job, result, version):
             raise ValueError("本录入入口仅支持客观题和主观题；编程题请使用编程题命题流程")
         pipeline = payload.get("pipeline", {}) if isinstance(payload.get("pipeline", {}), dict) else {}
         if pipeline.get("auto_solve") or pipeline.get("auto_verify"):
+            # The assignment admitted this intake and is now submitted. Later
+            # question work follows the current collection ACL, like manual
+            # follow-ups, rather than requiring the finished assignment to open.
+            followup_grant = {**grant, "assignment_id": None} if grant else None
             for question_row in new_questions:
                 chained_type = "question.solve" if pipeline.get("auto_solve") else "question.verify"
                 chain.append((question_row, chained_type, {"auto_verify": bool(pipeline.get("auto_verify") and pipeline.get("auto_solve")),
                                                             "allow_execution": False, "source_collection": row.id,
-                                                            "collaboration_grant": grant or None}))
+                                                            "collaboration_grant": followup_grant}))
     elif task_type == "question.solve":
         result["tags"] = resolve_tags(session, result["tags"], row.owner_id, row.owner_username)
         data.update(result)

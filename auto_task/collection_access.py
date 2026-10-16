@@ -61,6 +61,56 @@ def require_permission(session, collection, subject, required="view"):
     return role
 
 
+def native_question_permission(session, question, user, binding, group, write=False):
+    """An intake grant covers only native questions recorded by this collection."""
+    if question.kind != "question" or not question.parent_id:
+        return False
+    collection = session.query(AiResource).filter_by(
+        id=question.parent_id, kind="collection", deleted=0).first()
+    data = json.loads(question.data)
+    if (not collection or data.get("source_collection") != collection.id
+            or (question.owner_id, question.owner_username, question.course_id, question.psid)
+            != (collection.owner_id, collection.owner_username, collection.course_id, collection.psid)
+            or group.username != collection.owner_username
+            or binding.get("type") != {0: "objective", 1: "subjective"}.get(group.type)):
+        return False
+    subject = str(user["userId"])
+    role = permission(session, collection, subject)
+    if not role or (write and ROLES[role] < ROLES["editor"] and
+                    (ROLES[role] < ROLES["contributor"] or data.get("submitted_by") != subject)):
+        return False
+    manifest = json.loads(collection.data)
+    batches = manifest.get("native_batches", {})
+    items = manifest.get("items", [])
+    if not isinstance(batches, dict) or not isinstance(items, list):
+        return False
+    matching_batches = [item.get("batch_id") for item in items if isinstance(item, dict)
+                        and item.get("question_id") == question.id
+                        and item.get("status", "active") == "active"]
+    registered_groups = [batches.get(str(batch_id), []) for batch_id in matching_batches]
+    registered = any(
+        isinstance(record, dict) and str(record.get("gid")) == str(group.gid)
+        and record.get("type") == group.type
+        for records in registered_groups if isinstance(records, list) for record in records
+    )
+    if not registered or not any(str(item.get("pid")) == str(binding.get("pid"))
+                                 for item in json.loads(group.problemInfo)):
+        return False
+    if write:
+        # Collaborators write on behalf of the original native manager, whose
+        # authority may have changed since extraction completed.
+        from .access import fetch_actor
+        from auth import manager
+        from .resources import course_access
+        owner = fetch_actor(collection.owner_id, fresh=True)
+        if str(owner["userId"]) != collection.owner_id or owner["username"] != collection.owner_username:
+            return False
+        manager(owner)
+        if collection.course_id:
+            course_access(session, owner, collection.course_id, True)
+    return True
+
+
 def invite_member(session, collection, subject_id, username, role, actor_id, scope_course_id):
     if collection.owner_id != str(actor_id):
         raise HTTPException(403, "Only the collection owner may manage collaborators")
