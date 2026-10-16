@@ -77,7 +77,7 @@ def test_model_extraction_atomically_creates_native_group(database):
     with store.transaction() as s:
         collection = AiResource(id='native-extraction', kind='collection', owner_id='7', owner_username='teacher', data=store.dumps({'title':'教材录入','question_ids':[]}))
         s.add(collection); s.flush()
-        job = SimpleNamespace(id='extract-one', resource_id=collection.id, owner_id='7', owner_username='teacher', task_type='question.extract', payload='{}')
+        job = SimpleNamespace(id='extract-one', resource_id=collection.id, owner_id='7', owner_username='teacher', task_type='question.extract', payload=store.dumps({'native_bank_owner': '7'}))
         result = apply_result(s, job, {'questions':[question()]}, collection.version)
         native = s.query(ProblemSubjective).one()
         group = s.query(ProblemGroup).one()
@@ -125,3 +125,42 @@ def test_native_group_tools_enforce_the_original_group_permissions(database):
     response = bank_client().get('/question-bank/groups/%s/questions' % gid)
     assert response.status_code == 200
     assert response.json()['data']['rows'][0]['question']['answer'] == '后进先出'
+
+
+def test_private_student_extraction_cannot_forge_native_owner(database):
+    with store.transaction() as session:
+        row = AiResource(id="private-intake", kind="collection", owner_id="42", owner_username="student",
+                         data=store.dumps({"title": "Private", "question_ids": []}))
+        session.add(row); session.flush()
+        job = store.submit(session, USER, "question.extract", {"native_bank_owner": "7"}, "private", row)
+        assert json.loads(job.payload)["native_bank_owner"] is None
+        result = apply_result(session, job, {"questions": [question()]}, row.version)
+        assert result["count"] == 1
+        assert "native_groups" not in result
+        assert session.query(ProblemGroup).count() == session.query(ProblemSubjective).count() == 0
+        assert session.query(AiResource).filter_by(kind="question").count() == 1
+
+
+def test_native_manager_revocation_before_result_prevents_all_native_writes(database, monkeypatch):
+    with store.transaction() as session:
+        row = AiResource(id="manager-intake", kind="collection", owner_id="7", owner_username="teacher",
+                         data=store.dumps({"title": "Native", "question_ids": []}))
+        session.add(row); session.flush()
+        job = store.submit(session, ADMIN, "question.extract", {}, "manager", row)
+        assert json.loads(job.payload)["native_bank_owner"] == "7"
+    monkeypatch.setattr("auto_task.access.fetch_actor", lambda *args, **kwargs: {**ADMIN, "roles": ["user"]})
+    with pytest.raises(HTTPException) as caught:
+        with store.transaction() as session:
+            from auto_task.entities import TaskJob
+            apply_result(session, session.query(TaskJob).get(job.id), {"questions": [question()]}, 1)
+    assert caught.value.status_code == 403
+    with store.transaction() as session:
+        assert session.query(ProblemGroup).count() == session.query(ProblemSubjective).count() == 0
+        assert session.query(AiResource).filter_by(kind="question").count() == 0
+
+
+def test_native_batch_low_level_rejects_nonmanager(database):
+    with pytest.raises(HTTPException) as caught:
+        with store.transaction() as session:
+            save_batch(session, USER, "Unauthorized", "bad-role", [question()])
+    assert caught.value.status_code == 403

@@ -335,8 +335,10 @@ def create_job(body: TaskCreate, user=Depends(active_user)):
         if existing:
             previous = json.loads(existing.payload)
             previous.pop("resource_version", None)
+            previous.pop("native_bank_owner", None)
             requested = dict(body.payload)
             requested.pop("resource_version", None)
+            requested.pop("native_bank_owner", None)
             if existing.task_type != body.task_type or existing.resource_id != resource.id or previous != requested:
                 raise HTTPException(409, "Idempotency key conflict")
             return {"taskId": existing.id, "status": existing.status, "operation_key": existing.operation_key}

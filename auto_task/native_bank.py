@@ -9,6 +9,65 @@ from .store import digest, dumps
 CHOICE_TYPES = {"single_choice", "multiple_choice", "true_false"}
 
 
+def extraction_target(session, actor, resource, payload):
+    """Private extraction stays private; native persistence requires its owner manager."""
+    from .access import fetch_actor
+    from .resources import is_admin, course_access
+    from .store import principal
+    owner = actor if resource.owner_id == principal(actor) else fetch_actor(resource.owner_id, fresh=True)
+    if principal(owner) != resource.owner_id or owner["username"] != resource.owner_username:
+        raise HTTPException(403, "Native question owner identity changed")
+    if not is_admin(owner):
+        return None
+    from auth import manager
+    manager(owner)
+    if resource.course_id:
+        course_access(session, owner, resource.course_id, True)
+    if principal(actor) != resource.owner_id:
+        extraction_grant(session, actor, resource, payload)
+    return resource.owner_id
+
+
+def extraction_grant(session, actor, resource, payload):
+    from .store import principal
+    from .collection_access import assert_worker_grant
+    grant = payload.get("collaboration_grant")
+    if (resource.kind != "collection" or not isinstance(grant, dict)
+            or grant.get("collection_id") != resource.id
+            or str(grant.get("subject_id")) != principal(actor)):
+        raise HTTPException(403, "A matching collection intake grant is required")
+    try:
+        assert_worker_grant(session, resource.id, principal(actor), grant.get("assignment_id"))
+    except ValueError as error:
+        raise HTTPException(403, str(error)) from error
+
+
+def extraction_author(session, job, resource, payload):
+    target = payload.get("native_bank_owner")
+    if target is None:
+        return None
+    if target != resource.owner_id:
+        raise HTTPException(403, "Native extraction target changed")
+    from .access import fetch_actor
+    from .store import principal
+    from .resources import course_access
+    from auth import manager
+    owner = fetch_actor(target, fresh=True)
+    if principal(owner) != target or owner["username"] != resource.owner_username:
+        raise HTTPException(403, "Native question owner identity changed")
+    manager(owner)
+    if resource.course_id:
+        course_access(session, owner, resource.course_id, True)
+    if job.owner_id != target:
+        actor = fetch_actor(job.owner_id, fresh=True)
+        if principal(actor) != job.owner_id or actor["username"] != job.owner_username:
+            raise HTTPException(403, "Intake contributor identity changed")
+        from .resources import get_resource
+        get_resource(session, actor, resource.id)
+        extraction_grant(session, actor, resource, payload)
+    return owner
+
+
 def answer_labels(data):
     options = data.get("options", [])
     labels = [item["label"] for item in options]
@@ -131,6 +190,8 @@ def update_reference(session, resource, data):
 
 
 def save_batch(session, user, title, batch_key, questions, score=10, resources=None):
+    from auth import manager
+    manager(user)
     """One transaction, one group per native type per intake batch; retry is idempotent."""
     key = digest({"owner": str(user["userId"]), "batch": batch_key})
     record_id = "batch-" + key[:32]

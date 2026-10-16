@@ -240,8 +240,8 @@ def test_budget_reservations_prevent_concurrent_scope_overspend(database):
         first = resource(s, "42")
         second = resource(s, "7")
         first.course_id = second.course_id = 123
-        store.submit(s, USER, "question.extract", {}, "first", first)
-        store.submit(s, ADMIN, "question.extract", {}, "second", second)
+        store.submit(s, USER, "question.solve", {}, "first", first)
+        store.submit(s, ADMIN, "question.solve", {}, "second", second)
     a, b = store.claim(), store.claim()
     assert a and b
     begin_run(a, config)

@@ -121,6 +121,11 @@ def log(session, task_id, tag, content):
 
 def submit(session, user, task_type, payload, operation_key, resource=None, psid=None, payer_id=None):
     subject = principal(user)
+    if task_type == "question.extract":
+        if resource is None:
+            raise HTTPException(400, "Extraction resource is required")
+        from .native_bank import extraction_target
+        payload = {**payload, "native_bank_owner": extraction_target(session, user, resource, payload)}
     owner = account(session, subject, user["username"])
     assert_active(owner)
     if resource is not None and resource.kind == "question":

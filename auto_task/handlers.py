@@ -315,8 +315,10 @@ def apply_result(session, job, result, version):
         from .native_bank import save_batch
         native_rows = [session.query(AiResource).filter_by(id=question_id).one() for question_id in ids]
         supported = [item for item in native_rows if json.loads(item.data).get("question_type") != "programming"]
-        if supported:
-            saved = save_batch(session, {"userId": int(row.owner_id), "username": row.owner_username},
+        from .native_bank import extraction_author
+        native_owner = extraction_author(session, job, row, payload)
+        if supported and native_owner is not None:
+            saved = save_batch(session, native_owner,
                                str(data.get("title") or "题目录入批次"), str(payload.get("batch_id") or job.id),
                                [json.loads(item.data) for item in supported], resources=supported)
             result["native_groups"] = saved["groups"]

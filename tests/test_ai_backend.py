@@ -57,6 +57,9 @@ def database(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTOLAB_AI_SECRET_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("AUTOLAB_AI_WAKE", "0")
     monkeypatch.setenv("AUTOLAB_AI_VALIDATE_IDENTITY", "0")
+    from auto_task import access
+    actors = {"7": ADMIN, "42": USER, "8": {"userId": 8, "username": "collaborator", "roles": ["user"], "groups": [10]}}
+    monkeypatch.setattr(access, "fetch_actor", lambda subject, fresh=False: dict(actors[str(subject)]))
     with store.transaction() as s:
         s.add(AiSetting(id="runtime", data='{"max_concurrency":2,"per_user_concurrency":1}'))
     yield engine
@@ -775,6 +778,7 @@ def test_queue_scans_past_blocked_first_hundred(database):
             store.submit(s, USER, "question.extract", {}, "blocked-" + str(index), first)
         other = {"userId": 99, "username": "other"}
         row = resource(s, "99")
+        row.owner_username = "other"
         expected = store.submit(s, other, "question.extract", {}, "eligible", row).id
     assert store.claim()["id"] == expected
 
