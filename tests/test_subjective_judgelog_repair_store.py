@@ -206,3 +206,37 @@ def test_main_commit_repairs_history_without_changing_the_current_answer(databas
     record = json.loads(report.read_text())
     assert record["write_mode"] == "historical_log_only"
     assert record["repair"] == {"history": "updated", "answer": "not-requested"}
+
+
+@pytest.mark.parametrize("commit", [False, True])
+def test_main_report_covers_every_written_score_including_exact_names_and_clamps(database, monkeypatch, tmp_path, commit):
+    factory, engine = database
+    original = {"judgeComment": "original", "judgeLog": [
+        {"name": "A", "score": 10, "jScore": 8},
+        {"name": "Criterion B (reworded)", "score": 10, "jScore": 2},
+        {"name": "Unrelated", "score": 10, "jScore": 11},
+        {"name": "Tiny criterion (reworded)", "score": 10, "jScore": 0.5},
+    ]}
+    source = {"judgeLog": [{"name": "A", "score": 10, "jScore": 1},
+                           {"name": "Criterion B", "score": 10, "jScore": 7},
+                           {"name": "Tiny criterion", "score": 10, "jScore": 0.5000001}]}
+    with factory.begin() as session:
+        session.query(AutoTaskRunLog).get(2).content = json.dumps(original)
+        session.query(ProblemSetAnswerSheetDetail).one().judgeLog = json.dumps(original["judgeLog"])
+        session.add(AutoTaskRunLog(log_id=3, task_id="old", tag="log",
+                    content="<schema>" + json.dumps(source) + "</schema>"))
+    report = tmp_path / "score-diff.jsonl"
+    monkeypatch.setattr(repair, "parse_args", lambda: SimpleNamespace(
+        group_id=[100], username=None, task_id=None, limit=0, only_auto=False,
+        min_similarity=0.7, commit=commit, update_current_answer=False, report=str(report)))
+    monkeypatch.setattr("sqlalchemy.create_engine", lambda *args, **kwargs: engine)
+    assert repair.main() == 0
+    items = json.loads(report.read_text())["inconsistent_items"]
+    reported = [(item["result_index"], item["old_result_jScore"], item["new_result_jScore"]) for item in items]
+    assert reported == [(0, 8, 1), (1, 2, 7), (2, 11, 10), (3, 0.5, 0.5000001)]
+    assert items[2]["matched_log_index"] is None
+    history, answer, _ = state(factory)
+    assert answer == original["judgeLog"]
+    actual = [(i, old["jScore"], new["jScore"]) for i, (old, new) in
+              enumerate(zip(original["judgeLog"], history["judgeLog"])) if old["jScore"] != new["jScore"]]
+    assert actual == (reported if commit else [])

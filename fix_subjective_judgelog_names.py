@@ -8,7 +8,7 @@ Workflow (by groupId):
 4. If inconsistent, remap by maximum string matching and rebuild corrected `result.judgeLog`.
 5. With --commit, repair the historical result log only. Current AUTO answers
    require --update-current-answer and a matching latest-run/result snapshot.
-6. Report ONLY mismatch-related items (ignore consistent ones).
+6. Report every score that would change within a name-mismatch task.
 """
 
 from __future__ import annotations
@@ -589,7 +589,7 @@ def main() -> int:
                     skipped += 1
                     continue
 
-                selected_cand, exact_presence, exact_complete = _pick_best_schema_candidate(
+                selected_cand, _, exact_complete = _pick_best_schema_candidate(
                     result_rows=result_rows,
                     candidates=schema_candidates,
                 )
@@ -616,26 +616,18 @@ def main() -> int:
                     min_similarity=args.min_similarity,
                 )
 
-                # Report only mismatch-related items.
+                # Preview every value the corrected payload would write, including
+                # exact-name matches and unmatched values clamped to their maximum.
                 inconsistent_items: List[Dict[str, Any]] = []
                 corrected_rows = _parse_judge_rows(corrected_payload)
                 for i, rr in enumerate(result_rows):
-                    exact_log_idx = exact_presence.get(i)
-                    exact_ok = exact_log_idx is not None and log_rows[exact_log_idx].name == rr.name
-                    if exact_ok:
-                        continue
-
                     m_idx = match_map.get(i)
-                    if m_idx is None:
-                        # No corresponding item found in selected log; do not display/report.
-                        continue
                     m_name = log_rows[m_idx].name if m_idx is not None else None
                     m_sim = sim[i][m_idx] if m_idx is not None else 0.0
                     matched_jscore = (log_rows[m_idx].jscore if m_idx is not None else None)
                     new_jscore = corrected_rows[i].jscore
 
-                    # Ignore pure name mismatch when score is already equal.
-                    if matched_jscore is not None and abs(float(matched_jscore) - float(rr.jscore)) <= 1e-6:
+                    if new_jscore == rr.jscore:
                         continue
 
                     inconsistent_items.append(
