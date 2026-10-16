@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, validator
 from sqlalchemy import or_
 
-from db import ProblemSetAnswerSheetDetail
+from db import ProblemSetAnswerSheetDetail, ProblemSubjective
 from utils import api_response
 from auto_task.entities import AiFile, AiFileLink, AiResource, TaskJob, uid
 from auto_task.legacy_bridge import answer_snapshot
@@ -578,13 +578,18 @@ def adopt_interview_grade(resource_id: str, body: AdoptGrade, user=Depends(activ
         if review.get("candidate_job_id") != job.id or review.get("candidate_hash") != digest(candidate) or review.get("source_hash") != digest(source):
             raise HTTPException(409, "Reviewed candidate or source has changed")
         ps_access(session, user, source["psid"], True)
+        # Refresh under the lock before comparing the invitation snapshot. A plain
+        # read followed by SELECT FOR UPDATE can retain stale identity-map values.
+        locked = session.query(ProblemSetAnswerSheetDetail).filter_by(asd_id=source["asd_id"]).populate_existing().with_for_update().one_or_none()
+        question = session.query(ProblemSubjective).filter_by(pid=source["pid"]).populate_existing().with_for_update().one_or_none()
+        if locked is None or question is None:
+            raise HTTPException(409, "Native answer or question no longer exists")
         try:
             _, current = answer_snapshot(session, source["psid"], source["gid"], source["pid"], source["username"])
         except ValueError as error:
             raise HTTPException(409, str(error))
         if current["asd_id"] != source["asd_id"] or current["input_hash"] != source["input_hash"] or current["grade_hash"] != source["grade_hash"]:
             raise HTTPException(409, "Native answer, rubric, or grade changed since invitation")
-        locked = session.query(ProblemSetAnswerSheetDetail).filter_by(asd_id=source["asd_id"]).with_for_update().one()
         try:
             previous_log = json.loads(locked.judgeLog or "[]")
         except (TypeError, ValueError):

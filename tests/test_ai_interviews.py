@@ -38,7 +38,14 @@ TEACHER = {"userId": 7, "username": "teacher", "roles": ["admin"], "groups": []}
 
 @pytest.fixture
 def interview_client(monkeypatch, tmp_path):
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    test_url = os.environ.get("AUTOLAB_AI_TEST_DATABASE_URL")
+    if test_url:
+        from sqlalchemy.engine.url import make_url
+        url = make_url(test_url)
+        assert url.host in ("127.0.0.1", "localhost") and url.database == "autolab_ai_test"
+        engine = create_engine(test_url)
+    else:
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     tables = [AutoTaskRun.__table__, AutoTaskRunLog.__table__, ProblemGroup.__table__, ProblemSet.__table__,
               ProblemSetAnswerSheet.__table__, ProblemSetAnswerSheetDetail.__table__, ProblemSubjective.__table__, *TABLES]
     Base.metadata.create_all(engine, tables=tables)
@@ -217,8 +224,7 @@ def test_expiration_is_persisted_and_teacher_renews_as_new_invitation(interview_
     assert renewed.json()["data"]["data"]["renewed_from"] == created["id"]
 
 
-def test_teacher_review_adopts_only_the_bound_native_answer(interview_client):
-    client, _ = interview_client
+def approved_native_interview(client):
     with store.transaction() as session:
         session.add(ProblemSet(psid=1, name="lab", type=1, groupInfo='[{"gid":1}]', config="{}", username="teacher", groupId=1, tag="test"))
         session.add(ProblemGroup(gid=1, name="subjective", type=1, problemInfo='[{"pid":1,"score":10}]', username="teacher"))
@@ -249,8 +255,14 @@ def test_teacher_review_adopts_only_the_bound_native_answer(interview_client):
         "criteria": [{"name": "correctness", "score": 9}],
     })
     assert reviewed.status_code == 200, reviewed.text
+    return created, reviewed.json()["data"]["version"]
+
+
+def test_teacher_review_adopts_only_the_bound_native_answer(interview_client):
+    client, _ = interview_client
+    created, reviewed_version = approved_native_interview(client)
     adopted = client.post(f"/auto-task/ai/interviews/{created['id']}/adopt", json={
-        "version": reviewed.json()["data"]["version"], "reason": "Final teacher decision",
+        "version": reviewed_version, "reason": "Final teacher decision",
     })
     assert adopted.status_code == 200, adopted.text
     with store.transaction() as session:
@@ -261,3 +273,37 @@ def test_teacher_review_adopts_only_the_bound_native_answer(interview_client):
         "version": adopted.json()["data"]["version"], "decision": "reject", "notes": "late change",
         "criteria": [],
     }).status_code == 409
+
+
+@pytest.mark.skipif(not os.environ.get("AUTOLAB_AI_TEST_DATABASE_URL"), reason="requires isolated real MySQL")
+def test_mysql_manual_grade_committed_before_adoption_lock_is_preserved(interview_client):
+    from sqlalchemy import event
+    client, _ = interview_client
+    created, version = approved_native_interview(client)
+    engine = store.factory().kw["bind"]
+    manual = store.dumps([{"name": "correctness", "score": 10, "jScore": 6}])
+    triggered = []
+    def concurrent_grade(connection, cursor, statement, parameters, context, executemany):
+        sql = statement.lower()
+        if not triggered and "for update" in sql and ProblemSetAnswerSheetDetail.__tablename__.lower() in sql:
+            triggered.append(True)
+            # A distinct committed transaction wins immediately before adoption
+            # acquires its row lock; the subsequent snapshot check must see it.
+            with engine.begin() as other:
+                other.execute(ProblemSetAnswerSheetDetail.__table__.update().where(
+                    ProblemSetAnswerSheetDetail.asd_id == 1).values(
+                        judgeLog=manual, judgeComment="later manual grade", judgeLock_username="other-teacher"))
+    event.listen(engine, "before_cursor_execute", concurrent_grade)
+    try:
+        response = client.post(f"/auto-task/ai/interviews/{created['id']}/adopt", json={
+            "version": version, "reason": "Original candidate", "overwrite_manual": False})
+    finally:
+        event.remove(engine, "before_cursor_execute", concurrent_grade)
+    assert triggered
+    assert response.status_code == 409, response.text
+    with store.transaction() as session:
+        detail = session.query(ProblemSetAnswerSheetDetail).get(1)
+        assert detail.judgeLog == manual
+        assert detail.judgeComment == "later manual grade"
+        assert detail.judgeLock_username == "other-teacher"
+        assert session.query(AiResource).get(created["id"]).state == "approved"
