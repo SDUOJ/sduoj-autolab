@@ -18,7 +18,6 @@ def context(tmp_path, monkeypatch):
     for language in ("C", "CPP"):
         monkeypatch.setenv("AUTOLAB_SANDBOX_" + language + "_IMAGE", "gcc:14-bookworm")
     monkeypatch.setenv("AUTOLAB_SANDBOX_PYTHON_IMAGE", "python:3.13-slim")
-    monkeypatch.setenv("AUTOLAB_SANDBOX_JAVA_IMAGE", "autolab-sandbox:test")
     return SimpleNamespace(workspace=tmp_path, check=lambda: None)
 
 

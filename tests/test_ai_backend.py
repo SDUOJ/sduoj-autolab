@@ -414,6 +414,7 @@ def test_mysql_concurrent_claims_respect_global_limit(database):
         for number in range(10, 20):
             user = {"userId": number, "username": str(number), "roles": ["user"], "groups": []}
             row = resource(s, str(number))
+            row.owner_username = user["username"]
             store.submit(s, user, "question.extract", {}, "concurrent", row)
     with ThreadPoolExecutor(max_workers=6) as pool:
         claims = list(pool.map(lambda _: store.claim(), range(6)))

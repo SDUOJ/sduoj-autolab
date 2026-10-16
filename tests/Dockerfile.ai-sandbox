@@ -1,3 +1,0 @@
-FROM sduoj-judger:dev
-ENTRYPOINT []
-CMD ["sh"]
