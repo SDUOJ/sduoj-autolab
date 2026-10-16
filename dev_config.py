@@ -14,6 +14,13 @@ SERVICE_PORTS = {
     "filesys-service": 18084,
     "websocket-service": 18085,
 }
+for service, default_port in SERVICE_PORTS.items():
+    name = "AUTOLAB_DEV_" + service.replace("-", "_").upper() + "_PORT"
+    configured = os.environ.get(name, str(default_port))
+    if not configured.isascii() or not configured.isdecimal() or not 1 <= int(configured) <= 65535:
+        raise RuntimeError("Invalid local service port: " + name)
+    SERVICE_PORTS[service] = int(configured)
+
 
 
 def load_settings():
@@ -26,16 +33,19 @@ def load_settings():
             raise RuntimeError(f"Missing {name}; run ../sduoj-deploy/dev up first")
         return value
 
+    def setting(name, default):
+        return os.environ.get(name, local.get(name) or default)
+
     return {
         "SDUOJ_TOKEN": required("SDUOJ_TOKEN"),
-        "NACOS_addr": "127.0.0.1:8848",
-        "NACOS_namespace": "dev",
-        "Redis_addr": "127.0.0.1:7361",
+        "NACOS_addr": setting("AUTOLAB_NACOS_ADDR", "127.0.0.1:8848"),
+        "NACOS_namespace": setting("AUTOLAB_NACOS_NAMESPACE", "dev"),
+        "Redis_addr": setting("AUTOLAB_REDIS_ADDR", "127.0.0.1:7361"),
         "Redis_pass": required("AUTOLAB_REDIS_PASSWORD"),
-        "Mysql_addr": "127.0.0.1:7360",
-        "Mysql_user": "sduoj_ext_ps",
+        "Mysql_addr": setting("AUTOLAB_MYSQL_ADDR", "127.0.0.1:7360"),
+        "Mysql_user": setting("AUTOLAB_MYSQL_USER", "sduoj_ext_ps"),
         "Mysql_pass": required("AUTOLAB_MYSQL_PASSWORD"),
-        "Mysql_db": "sduoj_ext_problem_set",
+        "Mysql_db": setting("AUTOLAB_MYSQL_DATABASE", "sduoj_ext_problem_set"),
         "LLM_DOUBAO_BASE_URL": os.environ.get("DEV_LLM_BASE_URL", ""),
         "LLM_DOUBAO_API_KEY": os.environ.get("DEV_LLM_API_KEY", ""),
         "LAYOUT_PARSING_API_URL": os.environ.get("DEV_LAYOUT_PARSING_API_URL", ""),
