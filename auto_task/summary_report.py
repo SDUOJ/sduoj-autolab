@@ -127,6 +127,8 @@ class _SummaryReportService:
     def execute(self) -> Dict[str, Any]:
         """Main execution flow."""
         try:
+            from .subjective_review import _ensure_fastapi_cache
+            _ensure_fastapi_cache(self.loop)
             asyncio.set_event_loop(self.loop)
             return self.loop.run_until_complete(self._execute_inner())
         finally:
