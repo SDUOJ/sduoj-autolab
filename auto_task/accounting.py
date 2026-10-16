@@ -11,12 +11,14 @@ from .entities import AiRun, AiSetting, TaskJob, uid
 from .store import account, digest, dumps, fenced, has_unsettled_usage, ledger, log, transaction
 
 
-def begin_run(job, config, prompt_bytes=0):
+def begin_run(job, config, prompt_bytes=0, require_balance=False):
     with transaction() as s:
         # Serialize reservations with claims/config changes across all workers.
         s.query(AiSetting).filter_by(id="runtime").with_for_update().one()
         fenced(s, job["id"], job["lease_token"])
-        account(s, job["payer_id"])
+        payer = account(s, job["payer_id"])
+        if require_balance and payer.balance < 0:
+            raise HTTPException(402, "Insufficient AI points")
         if has_unsettled_usage(s, job["payer_id"]):
             raise ValueError("AI usage reconciliation required")
         reservation = (Decimal(prompt_bytes) * Decimal(str(config.input_usd_per_million))
