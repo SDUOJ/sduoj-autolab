@@ -101,7 +101,7 @@ def publish_question(resource_id: str, body: PublishQuestion, user=Depends(activ
                 raise HTTPException(409, "Publication request conflicts with the existing version")
             return {**previous, "replay": True}
         group = s.query(ProblemGroup).filter_by(gid=body.group_id).with_for_update().one()
-        choice = data.get("question_type") in ("single_choice", "multiple_choice")
+        choice = data.get("question_type") in ("single_choice", "multiple_choice", "true_false")
         if group.type != (0 if choice else 1):
             raise HTTPException(400, "Target group type mismatch; programming questions must use native OJ publishing")
         labels = [option["label"] for option in data.get("options", [])]
@@ -109,12 +109,12 @@ def publish_question(resource_id: str, body: PublishQuestion, user=Depends(activ
             raise HTTPException(400, "Invalid option labels")
         if choice and (not body.correct_labels or not set(body.correct_labels).issubset(labels)):
             raise HTTPException(400, "Explicit correct option labels required")
-        if data.get("question_type") == "single_choice" and len(body.correct_labels) != 1:
+        if data.get("question_type") in ("single_choice", "true_false") and len(body.correct_labels) != 1:
             raise HTTPException(400, "Single-choice questions need one correct label")
         if body.dry_run:
             return {"dry_run": True, "group_id": group.gid, "native_type": "objective" if choice else "subjective"}
         if choice:
-            native_type = 0 if data["question_type"] == "single_choice" else 1
+            native_type = 1 if data["question_type"] == "multiple_choice" else 0
             if native_type == 1 and data.get("native", {}).get("objective_type") == 2:
                 native_type = 2
             item = ProblemObjective(type=native_type,

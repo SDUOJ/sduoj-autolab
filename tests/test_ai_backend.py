@@ -1598,3 +1598,41 @@ def test_pair_review_and_report_are_authorized_and_versioned(client):
     with store.transaction() as s:
         s.query(AiResource).get("res-42").data = '{"candidate":{"report":"../res-99/secret"}}'
     assert client.get(path + "/report").status_code == 404
+
+
+@pytest.mark.parametrize("group_type", [0, 1])
+def test_true_false_publish_uses_only_native_objective_groups(client, monkeypatch, group_type):
+    from server import auto_task_actions as actions
+    monkeypatch.setattr(actions, "group_manager", lambda *args: None)
+    with store.transaction() as session:
+        session.add(ProblemGroup(gid=1, name="target", type=group_type, problemInfo="[]", username="student"))
+        resource(session, "42", "question", {"question_type": "true_false", "original": "1=1", "zh": "1=1",
+                    "options": [{"label": "A", "zh": "正确"}, {"label": "B", "zh": "错误"}]})
+    body = {"version": 1, "group_id": 1, "score": 5, "correct_labels": ["A"], "dry_run": True}
+    path = "/auto-task/ai/questions/res-42/publish"
+    preview = client.post(path, json=body)
+    assert preview.status_code == (200 if group_type == 0 else 400), preview.text
+    result = client.post(path, json={**body, "dry_run": False})
+    assert result.status_code == (200 if group_type == 0 else 400), result.text
+    with store.transaction() as session:
+        assert session.query(ProblemSubjective).count() == 0
+        if group_type == 0:
+            assert preview.json()["data"]["native_type"] == "objective"
+            item = session.query(ProblemObjective).one()
+            assert item.type == 0 and json.loads(item.answer) == ["A"]
+        else:
+            assert session.query(ProblemObjective).count() == 0
+
+
+def test_true_false_publish_requires_exactly_one_answer(client, monkeypatch):
+    from server import auto_task_actions as actions
+    monkeypatch.setattr(actions, "group_manager", lambda *args: None)
+    with store.transaction() as session:
+        session.add(ProblemGroup(gid=1, name="choices", type=0, problemInfo="[]", username="student"))
+        resource(session, "42", "question", {"question_type": "true_false", "zh": "Q",
+                 "options": [{"label": "A", "zh": "yes"}, {"label": "B", "zh": "no"}]})
+    response = client.post("/auto-task/ai/questions/res-42/publish", json={
+        "version": 1, "group_id": 1, "score": 5, "correct_labels": ["A", "B"], "dry_run": False})
+    assert response.status_code == 400
+    with store.transaction() as session:
+        assert session.query(ProblemObjective).count() == 0
