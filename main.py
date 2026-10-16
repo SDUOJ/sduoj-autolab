@@ -28,7 +28,9 @@ app = FastAPI()
 
 @app.middleware("http")
 async def ai_gateway_boundary(request, call_next):
-    if request.url.path.startswith("/auto-task"):
+    prefixes = ("/auto-task", "/management-agent", "/question-bank")
+    if any(request.url.path == prefix or request.url.path.startswith(prefix + "/")
+           for prefix in prefixes):
         from auto_task.access import gateway_allowed
         from const import MOD
         try:
