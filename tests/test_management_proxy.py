@@ -18,8 +18,8 @@ from auto_task.store import account, claim, transaction
 
 class Response:
     status_code = 200
-    def __init__(self, usage, streaming=False, duplicate=False, broken=False):
-        self.value = {'id': 'response-fixture', 'status': 'completed', 'output': [], 'usage': usage}
+    def __init__(self, usage, streaming=False, duplicate=False, broken=False, terminal='completed'):
+        self.value = {'id': 'response-fixture', 'status': terminal, 'output': [], 'usage': usage}
         self.streaming, self.duplicate, self.broken = streaming, duplicate, broken
         self.close = Mock()
     def iter_content(self, size):
@@ -28,7 +28,7 @@ class Response:
     def iter_lines(self, chunk_size):
         if self.broken: raise requests.ConnectionError('Synthetic upstream disconnect')
         for _ in range(2 if self.duplicate else 1):
-            yield b'data: ' + json.dumps({'type': 'response.completed', 'response': self.value}).encode()
+            yield b'data: ' + json.dumps({'type': 'response.' + self.value['status'], 'response': self.value}).encode()
             yield b''
 
 
@@ -78,6 +78,32 @@ def test_request_billing_is_idempotent_and_uses_saved_tariff_before_reply(bridge
     assert 'Cookie' not in request['headers']
     assert request['json']['max_output_tokens'] == 128
     assert request['json']['model'] == 'fixture'
+
+
+@pytest.mark.parametrize('streaming', [False, True])
+@pytest.mark.parametrize('terminal', ['failed', 'incomplete'])
+@pytest.mark.parametrize('known_usage', [False, True])
+def test_failed_and_capped_responses_settle_known_usage_once_in_both_transports(
+        bridge, streaming, terminal, known_usage):
+    usage = {'input_tokens': 10, 'output_tokens': 128} if known_usage else None
+    response = Response(usage, duplicate=True, terminal=terminal)
+    if terminal == 'incomplete':
+        response.value['incomplete_details'] = {'reason': 'max_output_tokens'}
+    bridge.responses.append(response)
+    assert bridge.call(streaming).status_code == 200
+    with transaction() as s:
+        run = s.query(AiRun).one()
+        assert run.status == ('failed' if known_usage else 'unsettled')
+        assert json.loads(run.usage)['usage_complete'] is known_usage
+        assert s.query(AiLedger).count() == (1 if known_usage else 0)
+        if known_usage: assert run.cost_usd == Decimal('0.000128000')
+    if known_usage:
+        bridge.responses.append(Response({'input_tokens': 10, 'output_tokens': 1}))
+        assert bridge.call().status_code == 200
+        assert len(bridge.forwarded) == 2
+    else:
+        assert bridge.call().status_code == 402
+        assert len(bridge.forwarded) == 1
 
 
 @pytest.mark.parametrize('budget', ['task', 'monthly'])

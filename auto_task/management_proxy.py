@@ -138,7 +138,7 @@ class ModelProxy:
                         data = b'\n'.join(item[5:].lstrip() for item in block if item.startswith(b'data:'))
                         if data and data != b'[DONE]':
                             value = json.loads(data)
-                            if value.get('type') in ('response.completed', 'response.failed') and not settled:
+                            if value.get('type') in ('response.completed', 'response.failed', 'response.incomplete') and not settled:
                                 result = value.get('response') or {}
                                 settle_run(run_id, response_usage(result.get('usage')),
                                            'success' if value['type'] == 'response.completed' else 'failed')
