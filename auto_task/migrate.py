@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 
-from sqlalchemy import inspect, text
+from sqlalchemy import MetaData, String, inspect, text
 
 from db import AutoTaskRun, AutoTaskRunLog
 from .configuration import safe_path
@@ -15,16 +15,76 @@ from .entities import AiFile, AiFileLink, AiResource, AiSetting, TABLES, TaskJob
 from .store import account, digest, dumps, factory, principal, transaction
 
 
+def _creation_tables(engine, existing):
+    metadata = MetaData()
+    originals = [AutoTaskRun.__table__, AutoTaskRunLog.__table__, *TABLES]
+    tables = [table.to_metadata(metadata) for table in originals]
+    inherited, conflicts = [], []
+    if engine.dialect.name != "mysql":
+        return tables, inherited, conflicts
+    inspector = inspect(engine)
+    # Reflection types alone omit a column's inherited table collation.
+    with engine.connect() as connection:
+        rules = {(row[0], row[1]): (row[2], row[3]) for row in connection.execute(text(
+            "SELECT TABLE_NAME,COLUMN_NAME,CHARACTER_SET_NAME,COLLATION_NAME "
+            "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE()"))}
+    reflected = {}
+
+    def actual_type(column):
+        if column.table.name not in existing:
+            return column.type
+        if column.table.name not in reflected:
+            reflected[column.table.name] = {item["name"]: item["type"]
+                                             for item in inspector.get_columns(column.table.name)}
+        value = reflected[column.table.name][column.name].copy()
+        charset, collation = rules.get((column.table.name, column.name), (None, None))
+        if isinstance(value, String):
+            value.charset, value.collation = charset, collation
+        return value
+
+    def inherit(column, parent):
+        value = actual_type(parent)
+        if not isinstance(value, String):
+            return
+        if column.table.name in existing:
+            current = actual_type(column)
+            if (not isinstance(current, String)
+                    or not getattr(current, "length", None)
+                    or current.length < value.length
+                    or getattr(current, "charset", None) != getattr(value, "charset", None)
+                    or getattr(current, "collation", None) != getattr(value, "collation", None)):
+                conflicts.append(str(column))
+            return
+        column.type = value.copy()
+        inherited.append({"column": str(column), "parent": str(parent),
+                          "type": column.type.compile(dialect=engine.dialect)})
+
+    for table in metadata.sorted_tables:
+        for column in table.columns:
+            for foreign_key in column.foreign_keys:
+                inherit(column, foreign_key.column)
+    # These task references deliberately have no FK, but participate in joins
+    # (including budget and unsettled-usage checks) with TaskJob.id.
+    task_id = metadata.tables[AutoTaskRun.__tablename__].c.id
+    for name in ("auto_task_ai_run", "auto_task_ledger", "auto_task_review", "auto_task_revision"):
+        inherit(metadata.tables[name].c.task_id, task_id)
+    return tables, inherited, conflicts
+
+
 def migrate(apply=False):
     engine = factory().kw["bind"]
     existing = set(inspect(engine).get_table_names())
-    tables = [AutoTaskRun.__table__, AutoTaskRunLog.__table__, *TABLES]
+    tables, inherited, conflicts = _creation_tables(engine, existing)
     missing = [table.name for table in tables if table.name not in existing]
     missing_indexes = []
     if AiResource.__tablename__ in existing and "ft_ai_resource_search" not in {index["name"] for index in inspect(engine).get_indexes(AiResource.__tablename__)}:
         missing_indexes.append("ft_ai_resource_search")
     if not apply:
-        return {"missing_tables": missing, "missing_indexes": missing_indexes, "apply_required": bool(missing or missing_indexes)}
+        return {"missing_tables": missing, "missing_indexes": missing_indexes,
+                "column_type_inheritance": inherited, "incompatible_existing_columns": conflicts,
+                "blocked": bool(conflicts), "apply_required": bool(missing or missing_indexes)}
+    if conflicts:
+        raise ValueError("Existing task key types require separate migration review: " + ", ".join(conflicts))
     for table in tables:
         table.create(engine, checkfirst=True)
     with transaction() as s:
