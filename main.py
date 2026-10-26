@@ -13,7 +13,10 @@ from utilsTime import getMsTime
 from auto_task import start_background_worker
 
 
+from server import run_context_internal
+
 app = FastAPI()
+app.include_router(run_context_internal.router)
 app.include_router(objective.router)
 app.include_router(answer_sheet.router)
 app.include_router(problem_set.router)
