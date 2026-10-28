@@ -2,11 +2,13 @@ import copy
 import json
 import math
 import re
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import HTTPException
 from fastapi_cache.decorator import cache
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
+from model.grade_review import SubjectiveGradeReview, claim_auto_grade, resolve_review, review_view
 
 from cache import class_func_key_builder
 from db import ProblemSetAnswerSheet, \
@@ -245,7 +247,11 @@ class answerSheetModel(problemSetModel, groupModel):
         for x in asd_data:
             asd = await self.get_detail_info_by_asd_obj(x)
             gid, pid, answer = asd["gid"], asd["pid"], asd["answer"]
-            i, j, tp = id2index[str(gid) + "-" + str(pid)]
+            position = id2index.get(str(gid) + "-" + str(pid))
+            # Keep historical answers when a problem or group is removed.
+            if position is None:
+                continue
+            i, j, tp = position
             data[i][j].update({
                 "hasAnswer": (answer is not None) and len(answer) != 0,
                 "collect": asd["collect"]
@@ -359,7 +365,11 @@ class answerSheetModel(problemSetModel, groupModel):
         allSubmission = await getSubmissionScore(psid, None, None, get_code)
 
         for x in asd_data:
-            i, j, tp = id2index[str(x.gid) + "-" + str(x.pid)]
+            position = id2index.get(str(x.gid) + "-" + str(x.pid))
+            # Only current problems contribute to progress and ranking.
+            if position is None:
+                continue
+            i, j, tp = position
             username = ids2username[x.asid]
             x = await self.get_detail_info_by_asd_obj(x)
             answer = x["answer"]
@@ -911,6 +921,9 @@ class answerSheetModel(problemSetModel, groupModel):
                 gid, pid = await self.get_gid_pid_by_psid_gi_pi_cache(
                     data.router.psid, data.router.gid, data.router.pid
                 )
+                if "judgeLog" in ext:
+                    detail = self.session.query(ProblemSetAnswerSheetDetail).get(info["asd_id"])
+                    add_ext["gradeReview"] = review_view(self.session, detail)
                 subj_info = await self.get_subjective_basic_cache(pid)
                 if subj_info["type"] == 2:
                     from sqlalchemy import and_ as _and
@@ -947,11 +960,11 @@ class answerSheetModel(problemSetModel, groupModel):
                             if asd_id_ == info["asd_id"]:
                                 rank = idx + 1
                                 break
-                    add_ext = {
+                    add_ext.update({
                         "acceptanceQueue": cur_queue_name,
                         "acceptanceRank": rank,
                         "acceptanceFinished": info.get("judgeLock_username") is not None
-                    }
+                    })
             return {**ext, **add_ext, "answer_m": info["answer"], "mark": info["mark"]}
 
     # 更新答案信息
@@ -1097,7 +1110,7 @@ class answerSheetModel(problemSetModel, groupModel):
 
     # 获取带评测列表
     async def get_judge_list_by_psid_page(
-            self, psid, pg, gi, pi, username, judgeLock, hasJudge, review_queue=None):
+            self, psid, pg, gi, pi, username, judgeLock, hasJudge, review_queue=None, review_filter=None):
 
         # 题单结束之前，不能评阅主观题 （暂时不使用这个设定）
         # tm_start, tm_end = await self.ps_get_all_tm_by_psid_cache(psid)
@@ -1157,7 +1170,18 @@ class answerSheetModel(problemSetModel, groupModel):
         cmd = self.session.query(ProblemSetAnswerSheetDetail).outerjoin(
             ProblemSetAnswerSheet,
             ProblemSetAnswerSheetDetail.asid == ProblemSetAnswerSheet.asid
-        ).filter(and_(*base_ls))
+        ).outerjoin(SubjectiveGradeReview, SubjectiveGradeReview.asd_id == ProblemSetAnswerSheetDetail.asd_id).filter(and_(*base_ls))
+        auto_grade = ProblemSetAnswerSheetDetail.judgeLock_username == "<AUTO>"
+        ai_review = and_(auto_grade, SubjectiveGradeReview.ai_needs_review == 1)
+        student_review = and_(auto_grade, SubjectiveGradeReview.status == "pending")
+        if review_filter == "ai":
+            cmd = cmd.filter(ai_review)
+        elif review_filter == "pending":
+            cmd = cmd.filter(student_review)
+        elif review_filter == "any":
+            cmd = cmd.filter(or_(ai_review, student_review))
+        elif review_filter == "resolved":
+            cmd = cmd.filter(SubjectiveGradeReview.status == "resolved")
 
         if review_queue is not None and len(review_queue.strip()) > 0:
             cmd = cmd.filter(
@@ -1165,7 +1189,9 @@ class answerSheetModel(problemSetModel, groupModel):
             ).order_by(ProblemSetAnswerSheetDetail.tm_answer_submit.asc())
 
         tn = cmd.count()
-        asd_data = cmd.offset(pg.offset()).limit(pg.limit())
+        asd_data = cmd.order_by(ProblemSetAnswerSheetDetail.asd_id).offset(pg.offset()).limit(pg.limit()).all()
+        review_rows = {r.asd_id: r for r in self.session.query(SubjectiveGradeReview).filter(
+            SubjectiveGradeReview.asd_id.in_([x.asd_id for x in asd_data])).all()} if asd_data else {}
 
         gid2gi = {}
         gid_pid2pi = {}
@@ -1203,7 +1229,10 @@ class answerSheetModel(problemSetModel, groupModel):
                 "tm_answer_submit": getMsTime(
                     x.tm_answer_submit) if x.tm_answer_submit is not None else None,
                 "judgeLock": x.judgeLock_username,
-                "hasJudge": x.judgeLog is not None
+                "hasJudge": bool(json.loads(x.judgeLog or "[]")),
+                "score": sum(item["jScore"] for item in json.loads(x.judgeLog or "[]")) if x.judgeLog else None,
+                "max_score": sum(item["score"] for item in json.loads(x.judgeLog or "[]")) if x.judgeLog else None,
+                "gradeReview": review_view(self.session, x, review_rows.get(x.asd_id)),
             })
         return tn, data
 
@@ -1218,7 +1247,12 @@ class answerSheetModel(problemSetModel, groupModel):
             ProblemSetAnswerSheetDetail.gid == gid,
             ProblemSetAnswerSheet.psid == psid,
             ProblemSetAnswerSheet.username == username
-        )).first()
+        )).with_for_update().first()
+        if asd is None:
+            raise HTTPException(status_code=404, detail="Answer not found")
+        native_detail = asd
+        review = review_view(self.session, asd)
+        can_edit = False
         asd = self.jsonLoads(
             self.dealData(asd, ["tm_answer_submit"], ["mark", "gid", "pid"]),
             ["answer", "judgeLog", "antiCheatingResult"]
@@ -1228,18 +1262,26 @@ class answerSheetModel(problemSetModel, groupModel):
         ).first()
         config = json.loads(pro.config)["judgeConfig"]
         asd["judgeConfig"] = config
-        if asd["judgeLock_username"] in (None, "<AUTO>"):
+        if asd["judgeLock_username"] is None:
             self.update_detail_by_asd_id(
                 asd["asd_id"], {"judgeLock_username": judger}
             )
             asd["judgeLock_username"] = judger
+        if asd["judgeLock_username"] == "<AUTO>" and asd["judgeLog"]:
+            can_edit = claim_auto_grade(self.session, native_detail, judger)
+            self.session.commit()
+        else:
+            can_edit = asd["judgeLock_username"] == judger
+            self.session.rollback()
+        asd["canEdit"] = can_edit
+        asd["gradeReview"] = review
         asd["description"] = pro.description
         asd["username"] = username
 
         return asd
 
     async def update_judgeLog_by_psid_gi_pi_username(
-            self, psid, gi, pi, username, judgeLog, cancel, judgeComment):
+            self, psid, gi, pi, username, judgeLog, cancel, judgeComment, judger=None):
         gid, pid = await self.get_gid_pid_by_psid_gi_pi_cache(psid, gi, pi)
         asd = self.session.query(ProblemSetAnswerSheetDetail).outerjoin(
             ProblemSetAnswerSheet,
@@ -1249,17 +1291,28 @@ class answerSheetModel(problemSetModel, groupModel):
             ProblemSetAnswerSheetDetail.gid == gid,
             ProblemSetAnswerSheet.psid == psid,
             ProblemSetAnswerSheet.username == username
-        )).first()
+        )).with_for_update().first()
+        if asd is None:
+            raise HTTPException(status_code=404, detail="Answer not found")
+        if judger is not None and asd.judgeLock_username == "<AUTO>":
+            claim = self.session.query(SubjectiveGradeReview).filter_by(asd_id=asd.asd_id).with_for_update().first()
+            if not claim or claim.reviewer_id != judger or not claim.reviewer_until or claim.reviewer_until <= datetime.utcnow():
+                raise HTTPException(status_code=409, detail="评分编辑占用已过期或被其他教师占用，请重新打开评分页面")
+        elif judger is not None and asd.judgeLock_username != judger:
+            raise HTTPException(status_code=409, detail="该答题已被其他教师评阅，请刷新后重试")
         if cancel == 1:
-            self.update_detail_by_asd_id(asd.asd_id, {
-                "judgeLog": None,
-                "judgeLock_username": None
-            })
+            asd.judgeLog, asd.judgeLock_username = None, None
+            if judger is not None:
+                claim = self.session.query(SubjectiveGradeReview).filter_by(asd_id=asd.asd_id).with_for_update().first()
+                if claim and claim.reviewer_id == judger:
+                    claim.reviewer_id = claim.reviewer_until = None
         else:
-            self.update_detail_by_asd_id(asd.asd_id, {
-                "judgeLog": judgeLog,
-                "judgeComment": judgeComment
-            })
+            asd.judgeLog, asd.judgeComment = json.dumps(judgeLog), judgeComment
+            if judger is not None:
+                asd.judgeLock_username = judger
+        if judger is not None:
+            resolve_review(self.session, asd, judger)
+        self.session.commit()
 
     @cache(expire=60, key_builder=class_func_key_builder)
     async def get_group_random_list_cache(

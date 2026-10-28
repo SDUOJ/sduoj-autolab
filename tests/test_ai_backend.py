@@ -14,7 +14,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from db import AutoTaskRun, AutoTaskRunLog, Base, ProblemGroup, ProblemObjective, ProblemSet, ProblemSetAnswerSheet, ProblemSetAnswerSheetDetail, ProblemSubjective
+from db import AutoTaskRun, AutoTaskRunLog, Base, ProblemGroup, ProblemObjective, ProblemSet, ProblemSetAnswerSheet, ProblemSetAnswerSheetDetail, ProblemSubjective, ojCourse
 from auto_task import store
 from auto_task.configuration import ProviderConfig, provider, save_provider
 from auto_task.entities import AiFile, AiFileLink, AiLedger, AiResource, AiReview, AiRun, AiSetting, TABLES, TaskJob
@@ -50,7 +50,7 @@ def database(monkeypatch, tmp_path):
     else:
         engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     tables = [AutoTaskRun.__table__, AutoTaskRunLog.__table__, ProblemGroup.__table__, ProblemObjective.__table__, ProblemSet.__table__,
-              ProblemSetAnswerSheet.__table__, ProblemSetAnswerSheetDetail.__table__, ProblemSubjective.__table__, *TABLES]
+              ProblemSetAnswerSheet.__table__, ProblemSetAnswerSheetDetail.__table__, ProblemSubjective.__table__, ojCourse.__table__, *TABLES]
     Base.metadata.create_all(engine, tables=tables)
     monkeypatch.setattr(store, "_factory", sessionmaker(bind=engine, expire_on_commit=False))
     monkeypatch.setenv("AUTOLAB_AI_DATA_DIR", str(tmp_path))
@@ -78,8 +78,8 @@ def client(database):
     return TestClient(app)
 
 
-def resource(s, owner="42", kind="collection", data=None):
-    row = AiResource(id="res-" + owner, kind=kind, owner_id=owner, owner_username="student", data=store.dumps(data or {"text": "2+2?"}))
+def resource(s, owner="42", kind="collection", data=None, owner_username="student"):
+    row = AiResource(id="res-" + owner, kind=kind, owner_id=owner, owner_username=owner_username, data=store.dumps(data or {"text": "2+2?"}))
     s.add(row)
     s.flush()
     return row
@@ -147,6 +147,18 @@ def test_resource_and_user_serialization(database):
     assert store.claim() is None
     store.complete(first["id"], first["lease_token"], {})
     assert store.claim() is not None
+
+
+def test_complete_clears_previous_blocking_error(database):
+    job_id = enqueue()
+    active = store.claim()
+    with store.transaction() as s:
+        s.query(TaskJob).filter_by(id=job_id).one().error = "AI usage reconciliation required"
+    store.complete(job_id, active["lease_token"], {"ok": True})
+    with store.transaction() as s:
+        job = s.query(TaskJob).filter_by(id=job_id).one()
+        assert job.status == "success"
+        assert job.error is None
 
 
 def test_cancel_blocks_stale_side_effect(database):
@@ -245,6 +257,25 @@ def test_provider_endpoint_change_requires_fresh_key_and_public_view_filters_unk
         ProviderConfig(base_url="http://127.0.0.1:9000/v1", model="test")
 
 
+def test_release_provider_allows_only_configured_private_http_origin(monkeypatch):
+    from pydantic import ValidationError
+
+    monkeypatch.setattr("const.MOD", "release")
+    monkeypatch.setenv("AUTOLAB_AI_TRUSTED_HTTP_PROVIDER_ORIGINS", "http://10.102.34.150:18080")
+
+    config = ProviderConfig(
+        provider="codex",
+        base_url="http://10.102.34.150:18080/v1",
+        model="deepseek-v4.1-flash",
+    )
+    assert config.base_url == "http://10.102.34.150:18080/v1"
+
+    with pytest.raises(ValidationError):
+        ProviderConfig(base_url="http://10.102.34.151:18080/v1", model="test")
+    with pytest.raises(ValidationError):
+        ProviderConfig(base_url="http://10.102.34.150:18080/private", model="test")
+
+
 def test_provider_settings_update_uses_optimistic_version(database):
     app = FastAPI()
     app.include_router(api.router)
@@ -278,6 +309,201 @@ def test_model_http_request_never_follows_redirect_with_provider_authorization(d
     with pytest.raises(RuntimeError, match="HTTP 302"):
         Context(job).ask("test", {"title": "Example", "type": "object"})
     assert options["allow_redirects"] is False
+
+
+def test_responses_model_call_sends_stateless_images_and_settles_usage(database, monkeypatch, tmp_path):
+    from auto_task.runtime import Context
+    config = ProviderConfig(**{**model_config().dict(), "provider": "responses"})
+    with store.transaction() as s:
+        save_provider(s, config, "test-only-key")
+    job_id = enqueue()
+    job = store.claim()
+    image = tmp_path / "sample.png"
+    image.write_bytes(b"synthetic-image")
+    captured = {}
+
+    class Response:
+        ok = True
+
+        def iter_lines(self, decode_unicode=True):
+            events = [
+                {"type": "response.reasoning_summary_text.delta", "delta": "ignored"},
+                {"type": "response.output_text.delta", "delta": '{"answer":'},
+                {"type": "response.output_text.delta", "delta": '"4"}'},
+                {"type": "response.completed", "response": {"status": "completed", "usage": {
+                    "input_tokens": 100, "output_tokens": 10,
+                    "input_tokens_details": {"cached_tokens": 20}}}},
+            ]
+            yield from ("data: " + json.dumps(event) for event in events)
+            yield "data: [DONE]"
+
+        def close(self):
+            pass
+
+    def post(url, **kwargs):
+        captured.update(url=url, **kwargs)
+        return Response()
+
+    monkeypatch.setattr("auto_task.runtime.requests.post", post)
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}
+    assert Context(job).ask("2+2?", schema, [image]) == {"answer": "4"}
+    assert captured["url"] == "https://example.invalid/v1/responses"
+    payload = captured["json"]
+    assert payload["store"] is False and payload["stream"] is True
+    assert "previous_response_id" not in payload
+    visible_prompt = payload["input"][0]["content"][0]["text"]
+    assert store.dumps(schema) in visible_prompt and "2+2?" in visible_prompt
+    assert "Return exactly one JSON object" in visible_prompt
+    assert payload["input"][0]["content"][1]["type"] == "input_image"
+    assert payload["text"]["format"]["type"] == "json_schema"
+    assert captured["allow_redirects"] is False
+    with store.transaction() as s:
+        run = s.query(AiRun).filter_by(task_id=job_id).one()
+        assert run.status == "success"
+        assert json.loads(run.usage)["cached_input_tokens"] == 20
+        assert run.cost_usd == Decimal("0.00011")
+
+
+@pytest.mark.parametrize("status,content", [
+    ("incomplete", [{"type": "output_text", "text": '{"answer":"4"}'}]),
+    ("failed", []),
+    ("completed", [{"type": "refusal", "refusal": "No"}]),
+    ("completed", []),
+])
+def test_responses_rejects_incomplete_or_refused_outputs(monkeypatch, status, content):
+    from auto_task.runtime import Context
+    ctx = object.__new__(Context)
+    config = ProviderConfig(**{**model_config().dict(), "provider": "responses"})
+
+    class Response:
+        ok = True
+
+        def iter_lines(self, decode_unicode=True):
+            usage = {"input_tokens": 10, "output_tokens": 1}
+            output = [{"type": "message", "content": content}] if content else []
+            if status == "completed":
+                event = {"type": "response.completed", "response": {"status": status, "output": output, "usage": usage}}
+                if content and content[0].get("type") == "output_text":
+                    event = {"type": "response.output_text.delta", "delta": content[0]["text"]}
+                    yield "data: " + json.dumps(event)
+                    event = {"type": "response.completed", "response": {"status": status, "output": output, "usage": usage}}
+            else:
+                event = {"type": "response." + status, "response": {"status": status, "output": output, "usage": usage}}
+            yield "data: " + json.dumps(event)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("auto_task.runtime.requests.post", lambda *_, **kwargs: Response())
+    with pytest.raises(ValueError):
+        ctx._responses(config, "test-only-key", "test", {}, [])
+    assert ctx.observed_usage == {"input_tokens": 10, "output_tokens": 1}
+
+
+def test_responses_rejects_prose_while_retaining_observed_usage(monkeypatch):
+    from auto_task.runtime import Context
+    ctx = object.__new__(Context)
+    config = ProviderConfig(**{**model_config().dict(), "provider": "responses"})
+
+    class Response:
+        ok = True
+
+        def iter_lines(self, decode_unicode=True):
+            yield "data: " + json.dumps({"type": "response.output_text.delta", "delta": "**Classification: Normal**"})
+            yield "data: " + json.dumps({"type": "response.completed", "response": {
+                "status": "completed", "usage": {"input_tokens": 10, "output_tokens": 1}}})
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("auto_task.runtime.requests.post", lambda *_, **kwargs: Response())
+    with pytest.raises(ValueError, match="did not contain valid JSON"):
+        ctx._responses(config, "test-only-key", "test", {}, [])
+    assert ctx.observed_usage == {"input_tokens": 10, "output_tokens": 1}
+
+
+def test_responses_accepts_schema_json_when_compatible_gateway_omits_terminal_event(monkeypatch):
+    from auto_task.runtime import Context
+    ctx = object.__new__(Context)
+    config = ProviderConfig(**{**model_config().dict(), "provider": "responses"})
+
+    class Response:
+        ok = True
+
+        def iter_lines(self, decode_unicode=True):
+            yield "data: " + json.dumps({"type": "response.output_text.delta", "delta": '{"answer":"4"}'})
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("auto_task.runtime.requests.post", lambda *_, **kwargs: Response())
+    result, usage = ctx._responses(config, "test-only-key", "test", {
+        "type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"],
+    }, [])
+    assert result == {"answer": "4"}
+    assert usage == {} and ctx.observed_usage == {}
+    assert ctx.stream_diagnostics["accepted_eof_json"] is True
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_responses_decodes_chinese_sse_as_utf8(monkeypatch, terminal):
+    from auto_task.runtime import Context
+    ctx = object.__new__(Context)
+    config = ProviderConfig(**{**model_config().dict(), "provider": "responses"})
+    expected = {"name": "算法正确性", "summary": "答案正确"}
+
+    class Response:
+        ok = True
+        encoding = "ISO-8859-1"
+
+        def iter_lines(self, decode_unicode=True):
+            events = [{"type": "response.output_text.delta", "delta": json.dumps(expected, ensure_ascii=False)}]
+            if terminal:
+                events.append({"type": "response.completed", "response": {
+                    "status": "completed", "usage": {"input_tokens": 10, "output_tokens": 2}}})
+            for event in events:
+                yield ("data: " + json.dumps(event, ensure_ascii=False)).encode("utf-8").decode(self.encoding)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("auto_task.runtime.requests.post", lambda *_, **__: Response())
+    result, _ = ctx._responses(config, "test-only-key", "test", {}, [])
+    assert result == expected
+
+
+def test_responses_5xx_does_not_fall_back_to_chat_completions(database, monkeypatch):
+    from auto_task.runtime import Context
+    config = ProviderConfig(**{**model_config().dict(), "provider": "responses"})
+    with store.transaction() as s:
+        save_provider(s, config, "test-only-key")
+    job_id = enqueue()
+    job = store.claim()
+    captured = {}
+
+    class Response:
+        ok, status_code = False, 502
+
+        def close(self):
+            pass
+
+    def post(url, **kwargs):
+        captured.update(url=url, **kwargs)
+        return Response()
+
+    monkeypatch.setattr("auto_task.runtime.requests.post", post)
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}
+    with pytest.raises(RuntimeError, match="HTTP 502 \(Responses\)"):
+        Context(job).ask("2+2?", schema)
+    assert captured["url"] == "https://example.invalid/v1/responses"
+    assert captured["stream"] is True
+    with store.transaction() as s:
+        run = s.query(AiRun).filter_by(task_id=job_id).one()
+        assert run.status == "unsettled"
+        failure_logs = [json.loads(row.content) for row in s.query(AutoTaskRunLog).filter_by(task_id=job_id, tag="log")]
+        failure = next(item for item in failure_logs if item.get("event") == "model_request_failed")
+        assert failure["error_type"] == "ProviderHTTPError"
+        assert failure["stream"]["event_types"] == []
 
 
 def test_dedup_ignores_option_order_not_question_case():
@@ -613,6 +839,7 @@ def test_api_only_uses_existing_method_policy(client):
     ("ide.tutor", "ide", {"language": "python", "code": "print(4)"}),
 ])
 def test_workflow_handlers_apply_validated_results(database, monkeypatch, task_type, kind, data):
+    monkeypatch.setattr("auto_task.access.fetch_actor", lambda subject, **_: USER)
     from auto_task.runtime import Context
     results = {
         "Moderation": {"decision": "normal", "reason": ""},
@@ -773,7 +1000,7 @@ def test_queue_scans_past_blocked_first_hundred(database):
         for index in range(110):
             store.submit(s, USER, "question.extract", {}, "blocked-" + str(index), first)
         other = {"userId": 99, "username": "other"}
-        row = resource(s, "99")
+        row = resource(s, "99", owner_username="other")
         expected = store.submit(s, other, "question.extract", {}, "eligible", row).id
     assert store.claim()["id"] == expected
 
@@ -903,8 +1130,8 @@ def test_pptx_slides_are_ordered_and_not_flattened(tmp_path):
             archive.writestr("ppt/slides/slide%d.xml" % number,
                             '<p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:t>Slide %d</a:t></p>' % number)
     pages = extract_document(path, SimpleNamespace(check=lambda: None))
-    assert [page["page"] for page in pages] == [1, 2, 10]
-    assert pages[-1]["text"] == "Slide 10"
+    assert [page["page"] for page in pages] == [1, 2, 3]
+    assert [page["text"] for page in pages] == ["Slide 1", "Slide 2", "Slide 10"]
 
 
 def test_pptx_uses_presentation_relationship_order(tmp_path):
@@ -1108,6 +1335,20 @@ def test_crashed_model_intent_blocks_until_idempotent_reconciliation(database):
     assert store.claim(datetime.utcnow() + timedelta(seconds=31))["id"] == job_id
 
 
+def test_same_task_can_continue_after_gateway_usage_becomes_unsettled(database):
+    from auto_task.accounting import begin_run, settle_run
+    from auto_task.entities import AiRun
+    job_id = enqueue()
+    job = store.claim()
+    run_id = begin_run(job, model_config())
+    assert settle_run(run_id, {}, "failed")["status"] == "unsettled"
+    second_run = begin_run(job, model_config())
+    assert second_run != run_id
+    with store.transaction() as s:
+        assert s.query(AiRun).filter_by(task_id=job_id, status="unsettled").count() == 1
+        assert s.query(AiRun).filter_by(task_id=job_id, status="running").count() == 1
+
+
 @pytest.mark.parametrize("usage", [{}, {"input_tokens": 10}, {"input_tokens": 10, "output_tokens": -1},
                                   {"input_tokens": 10, "cached_input_tokens": 11, "output_tokens": 1}])
 def test_unknown_usage_is_never_treated_as_free(database, usage):
@@ -1221,6 +1462,7 @@ def test_content_moderation_replay_is_idempotent(database, monkeypatch):
 
 
 def test_visible_ide_cases_capture_mismatch_and_runtime_error(database, monkeypatch):
+    monkeypatch.setattr("auto_task.access.fetch_actor", lambda subject, **_: USER)
     with store.transaction() as s:
         row = resource(s, "42", "ide", {"language": "python", "code": "print(4)"})
         store.submit(s, USER, "ide.execute", {"tests": [{"input": "1", "output": "4"}, {"input": "2", "output": "5"}, {"input": "3", "output": "4"}]}, "cases", row)
@@ -1526,9 +1768,11 @@ def test_native_grade_submission_freezes_source_and_rejects_stale_input(client):
         assert not s.query(ProblemSetAnswerSheetDetail).get(1).judgeLog
 
 
-def test_native_grade_worker_candidate_and_teacher_adoption(client, monkeypatch):
+def test_native_grade_worker_writes_back_and_teacher_can_override(client, monkeypatch):
+    import asyncio
     from types import SimpleNamespace
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
+    from model.answer_sheet import answerSheetModel
     from auto_task.runtime import Context
     import auto_task.subjective_review as legacy
     body = native_answer_fixture(client)
@@ -1548,12 +1792,77 @@ def test_native_grade_worker_candidate_and_teacher_adoption(client, monkeypatch)
     with store.transaction() as s:
         job = s.query(TaskJob).get(result["taskId"])
         assert job.status == "success", job.error
-        assert not s.query(ProblemSetAnswerSheetDetail).get(1).judgeLog
+        detail = s.query(ProblemSetAnswerSheetDetail).get(1)
+        assert json.loads(detail.judgeLog)[0]["jScore"] == 8
+        assert detail.judgeComment == "checked"
+        assert detail.judgeLock_username == "<AUTO>"
+        assert json.loads(job.result)["written_back"] is True
+        assert json.loads(job.result)["candidate"] is False
+        assert s.query(AiResource).get(result["resource_id"]).state == "adopted"
         assert s.query(AiResource).get(result["resource_id"]).version == 2
     adopted = client.post("/auto-task/ai/grading/" + result["resource_id"] + "/adopt", json={"version": 2, "reason": "Teacher checked evidence"})
     assert adopted.status_code == 200, adopted.text
+    assert adopted.json()["data"]["replay"] is True
+
+    # The existing manual grading model can still edit the automatic score.
+    manual = object.__new__(answerSheetModel)
+    manual.session = store.factory()()
+    manual.get_gid_pid_by_psid_gi_pi_cache = AsyncMock(return_value=(1, 1))
+    try:
+        manual.update_detail_by_asd_id(1, {"judgeLock_username": "teacher"})
+        asyncio.run(manual.update_judgeLog_by_psid_gi_pi_username(
+            1, 0, 0, "student", [{"name": "correct", "score": 10, "jScore": 9}], 0, "teacher corrected"))
+    finally:
+        manual.session.close()
     with store.transaction() as s:
-        assert json.loads(s.query(ProblemSetAnswerSheetDetail).get(1).judgeLog)[0]["jScore"] == 8
+        detail = s.query(ProblemSetAnswerSheetDetail).get(1)
+        assert json.loads(detail.judgeLog)[0]["jScore"] == 9
+        assert detail.judgeComment == "teacher corrected"
+        from auto_task.legacy_bridge import writeback_subjective_result
+        completed = s.query(TaskJob).get(result["taskId"])
+        writeback_subjective_result(s, completed, json.loads(completed.result))
+        assert json.loads(detail.judgeLog)[0]["jScore"] == 9
+
+    # A later automatic run preserves a grade already claimed by a teacher.
+    monkeypatch.setattr(Context, "ask", lambda *_args, **_kwargs: pytest.fail("manual grade must skip model calls"))
+    retry = client.post("/auto-task/ai/native/grading/create", json={**body, "operation_key": "after-manual"})
+    assert retry.status_code == 200, retry.text
+    assert run_once()
+    with store.transaction() as s:
+        job = s.query(TaskJob).get(retry.json()["data"]["taskId"])
+        assert job.status == "success", job.error
+        assert json.loads(job.result)["skipped"] == "manual_grade_exists"
+        assert json.loads(s.query(ProblemSetAnswerSheetDetail).get(1).judgeLog)[0]["jScore"] == 9
+
+
+@pytest.mark.parametrize("change", ["answer", "grade", "rubric"])
+def test_native_auto_writeback_preserves_edits_during_model_execution(client, change):
+    from auto_task.legacy_bridge import answer_snapshot, writeback_subjective_result
+    body = native_answer_fixture(client)
+    created = client.post("/auto-task/ai/native/grading/create", json=body).json()["data"]
+    with store.transaction() as s:
+        _, source = answer_snapshot(s, 1, 1, 1, "student")
+        value = {"source": source, "judgeLog": [{"name": "correct", "score": 10, "jScore": 8}],
+                 "judgeComment": "checked", "evaluation": {"criteria": [{"name": "correct", "max_score": 10,
+                    "score": 8, "evidence": "answer"}], "summary": "checked", "needs_review": False, "confidence": 1}}
+        detail = s.query(ProblemSetAnswerSheetDetail).get(1)
+        if change == "answer":
+            detail.answer = '["new answer"]'
+        elif change == "grade":
+            detail.judgeLog = '[{"name":"correct","score":10,"jScore":9}]'
+            detail.judgeComment, detail.judgeLock_username = "teacher correction", "teacher"
+        else:
+            s.query(ProblemSubjective).get(1).config = '{"judgeConfig":[{"name":"changed","score":10}]}'
+    with pytest.raises(ValueError, match="changed during model execution"):
+        with store.transaction() as s:
+            writeback_subjective_result(s, s.query(TaskJob).get(created["taskId"]), value)
+    with store.transaction() as s:
+        detail = s.query(ProblemSetAnswerSheetDetail).get(1)
+        assert detail.judgeLock_username != "<AUTO>"
+        if change == "grade":
+            assert json.loads(detail.judgeLog)[0]["jScore"] == 9
+        else:
+            assert not detail.judgeLog
 
 
 def test_exam_publication_is_bound_to_reviewed_native_payload(client, monkeypatch):

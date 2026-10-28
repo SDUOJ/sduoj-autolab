@@ -84,10 +84,8 @@ class problemSetModel(dbSession):
         data = self.session.query(ProblemSet).filter(
             ProblemSet.groupId.in_(groups)
         ).all()
-        return self.dealDataList(
-            data,
-            ["create_time", "tm_start", "tm_end"],
-            ["groupInfo", "config"])
+        return [self.jsonLoads(item, ["groupInfo", "config"])
+                for item in self.dealDataList(data, ["create_time", "tm_start", "tm_end"])]
 
     def ps_get_all_by_group_organized(self, groupId: int):
         data = self.session.query(ProblemSet).filter(
@@ -174,7 +172,24 @@ class problemSetModel(dbSession):
         obj = self.ps_get_obj_by_id(psid)
         return json.loads(obj.groupInfo)
 
-    # 带缓存：根据 group 列表获取“正在运行/即将开始”的题单列表，按组聚合并排序
+    # 首页统一入口：保留题单范围，返回扁平的跨业务展示结构。
+    async def ps_get_quick_entries(self, groups: list):
+        from model.quick_entries import problem_set_entries
+        from utilsTime import getNowTime
+
+        data = problem_set_entries(self.ps_list_by_groups(groups), getNowTime())
+        titles = {}
+        for entry in data["running"] + data["upcoming"]:
+            gid = entry["groupId"]
+            if gid is not None and gid not in titles:
+                try:
+                    titles[gid] = await getGroupName(int(gid))
+                except Exception:
+                    titles[gid] = None
+            entry["groupTitle"] = titles.get(gid)
+        return data
+
+    # 兼容已有按组聚合的接口。
     @cache(expire=60, key_builder=class_func_key_builder)
     async def ps_get_upcoming_running_by_groups_cache(self, groups: list):
         from utilsTime import getNowTime, inTime

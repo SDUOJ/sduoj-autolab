@@ -27,6 +27,7 @@ except ImportError:  # pragma: no cover
 
 from auto_task.llm_client import describe_images_to_text
 from sduojApi import downloadFile, uploadFiles
+from const import PUBLIC_OJ_BASE_URL
 
 IMAGE_PLACEHOLDER = "[[IMAGE:{}]]"
 MD_LINK_PATTERN = re.compile(r"(!)?\[[^\]]*]\(([^)]+)\)")
@@ -699,7 +700,7 @@ def _normalize_oj_file_url(url: str) -> str:
         url = url[1:-1].strip()
     if url.startswith("oj-file://"):
         file_id = url.split("oj-file://", 1)[-1]
-        return f"https://oj.qd.sdu.edu.cn/api/filesys/download/{file_id}/{file_id}"
+        return f"{PUBLIC_OJ_BASE_URL}/api/filesys/download/{file_id}/{file_id}"
     return url
 
 
@@ -717,7 +718,7 @@ def _guess_filename_from_url(url: str) -> str:
 
 def _build_filesys_download_url(file_id: str, file_name: Optional[str]) -> str:
     name = file_name or file_id
-    return f"https://oj.qd.sdu.edu.cn/api/filesys/download/{file_id}/{quote(name)}"
+    return f"{PUBLIC_OJ_BASE_URL}/api/filesys/download/{file_id}/{quote(name)}"
 
 
 def _is_filesys_download_url(url: str) -> bool:

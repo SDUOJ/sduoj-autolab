@@ -615,7 +615,6 @@ class AutoTaskRun(Base):
 
     __table_args__ = (
         Index("ix_auto_task_run_task_type_status", "task_type", "status"),
-        Index("ix_auto_task_run_psid", "psid"),
     )
 
 

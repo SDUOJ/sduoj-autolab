@@ -20,6 +20,7 @@ from sduojApi import getGroupMember, getGroupName, uploadFiles
 from .base import BaseAutoTask, register_task
 
 logger = logging.getLogger(__name__)
+_WORKER_LOOP: Optional[asyncio.AbstractEventLoop] = None
 
 
 # --- Payload Schema ---
@@ -105,6 +106,13 @@ class SummaryReportTask(BaseAutoTask):
         return SummaryReportPayload.parse_obj(self.payload)
 
 
+def _get_worker_loop() -> asyncio.AbstractEventLoop:
+    global _WORKER_LOOP
+    if _WORKER_LOOP is None or _WORKER_LOOP.is_closed() or _WORKER_LOOP.is_running():
+        _WORKER_LOOP = asyncio.new_event_loop()
+    return _WORKER_LOOP
+
+
 class _SummaryReportService:
     """Service class handling the actual report generation logic."""
 
@@ -114,26 +122,15 @@ class _SummaryReportService:
         
         self.answer_model = answerSheetModel()
         self.ps_model = problemSetModel()
+        self.loop = _get_worker_loop()
 
     def execute(self) -> Dict[str, Any]:
         """Main execution flow."""
-        created_loop = False
         try:
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                created_loop = True
-            if loop.is_closed():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                created_loop = True
-            try:
-                return loop.run_until_complete(self._execute_inner())
-            finally:
-                if created_loop:
-                    loop.close()
+            from .subjective_review import _ensure_fastapi_cache
+            _ensure_fastapi_cache(self.loop)
+            asyncio.set_event_loop(self.loop)
+            return self.loop.run_until_complete(self._execute_inner())
         finally:
             self._cleanup()
 

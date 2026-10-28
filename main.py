@@ -11,12 +11,36 @@ from server import answer_sheet, objective, \
     course, course_schedule, seat_binding, attendance, classroom
 from utilsTime import getMsTime
 from auto_task import start_background_worker
-
-
+from server import auto_task_ai
+from server import auto_task_actions
+from server import auto_task_native
+from server import auto_task_management
+from server import auto_task_interviews
+from server import auto_task_exams
+from server import auto_task_authoring
+from server import auto_task_questions
+from server import auto_task_collaboration
 from server import run_context_internal
 
+
 app = FastAPI()
-app.include_router(run_context_internal.router)
+
+
+@app.middleware("http")
+async def ai_gateway_boundary(request, call_next):
+    prefixes = ("/auto-task", "/management-agent", "/question-bank")
+    if any(request.url.path == prefix or request.url.path.startswith(prefix + "/")
+           for prefix in prefixes):
+        from auto_task.access import gateway_allowed
+        from const import MOD
+        try:
+            peer = request.client
+            if not gateway_allowed(peer.host if peer else "", MOD, peer.port if peer else None):
+                return JSONResponse({"code": 403, "message": "Untrusted Gateway peer", "data": None}, status_code=403)
+        except HTTPException as error:
+            return JSONResponse({"code": error.status_code, "message": error.detail, "data": None}, status_code=error.status_code)
+    return await call_next(request)
+
 app.include_router(objective.router)
 app.include_router(answer_sheet.router)
 app.include_router(problem_set.router)
@@ -28,6 +52,18 @@ app.include_router(summary.router)
 app.include_router(screen_record.router)
 app.include_router(test.router)
 app.include_router(auto_task.router)
+from server import question_bank
+app.include_router(question_bank.router)
+app.include_router(auto_task_ai.router)
+app.include_router(auto_task_actions.router, prefix="/auto-task/ai")
+app.include_router(auto_task_native.router, prefix="/auto-task/ai")
+app.include_router(auto_task_management.router, prefix="/auto-task/ai")
+app.include_router(auto_task_interviews.router, prefix="/auto-task/ai")
+app.include_router(auto_task_exams.router, prefix="/auto-task/ai")
+app.include_router(auto_task_authoring.router, prefix="/auto-task/ai")
+app.include_router(auto_task_questions.router, prefix="/auto-task/ai")
+app.include_router(auto_task_collaboration.router, prefix="/auto-task/ai")
+app.include_router(run_context_internal.router)
 
 # v3.0 新增路由
 app.include_router(course.router)
@@ -116,3 +152,6 @@ async def startup():
     from utils import init_redis
     init_redis()
     start_background_worker()
+
+from server import management_agent
+app.include_router(management_agent.router)

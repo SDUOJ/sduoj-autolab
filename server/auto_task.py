@@ -17,7 +17,13 @@ from db import (
     ProblemSet,
 )
 
-router = APIRouter(prefix="/auto-task", tags=["auto-task"])
+def _task_access_guard(user=Depends(cover_header)):
+    from auto_task.store import account, assert_active, principal, transaction
+    with transaction() as session:
+        assert_active(account(session, principal(user), user["username"]))
+
+
+router = APIRouter(prefix="/auto-task", tags=["auto-task"], dependencies=[Depends(_task_access_guard)])
 
 
 def _model_to_dict(model: BaseModel) -> dict:
@@ -70,7 +76,7 @@ async def _assert_group_creator(group_id: int, user: dict):
     group_info = _normalize_group_info(await getGroupMember(group_id))
     if group_info is None:
         raise HTTPException(status_code=403, detail="Permission Denial")
-    owner = group_info.get("username")
+    owner = group_info.get("username") or (group_info.get("owner") or {}).get("username")
     if str(owner or "") == str(user.get("username") or ""):
         return
     raise HTTPException(status_code=403, detail="Permission Denial")
@@ -192,6 +198,7 @@ async def create_subjective_review_tasks(
                     "username": item.username,
                     "ps_description": ps_description,
                     "programmingProblems": [_model_to_dict(pp) for pp in item.programmingProblems],
+                    "_actor": {"userId": user.get("userId"), "username": user.get("username")},
                 }
                 for item in tasks
             ]
@@ -276,6 +283,7 @@ async def create_summary_report_task(
     try:
         payload = _model_to_dict(data)
         payload["userId"] = userinfo["userId"]
+        payload["_actor"] = {"userId": userinfo.get("userId"), "username": userinfo.get("username")}
         task_id = model.add_task(
             task_type="summary_report",
             psid=None,

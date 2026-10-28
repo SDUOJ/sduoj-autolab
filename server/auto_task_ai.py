@@ -335,14 +335,20 @@ def create_job(body: TaskCreate, user=Depends(active_user)):
         if existing:
             previous = json.loads(existing.payload)
             previous.pop("resource_version", None)
+            previous.pop("native_bank_owner", None)
             requested = dict(body.payload)
             requested.pop("resource_version", None)
+            requested.pop("native_bank_owner", None)
             if existing.task_type != body.task_type or existing.resource_id != resource.id or previous != requested:
                 raise HTTPException(409, "Idempotency key conflict")
             return {"taskId": existing.id, "status": existing.status, "operation_key": existing.operation_key}
         if resource.kind not in KINDS[body.task_type]:
             raise HTTPException(400, "Task/resource type mismatch")
         data = json.loads(resource.data)
+        if body.task_type.startswith("ide."):
+            from auto_task.run_context import authorize_teaching_ide
+            from utilsTime import getNowTime
+            authorize_teaching_ide(s, principal(user), getNowTime())
         if body.task_type.startswith("ide.") and resource.psid and ps_access(s, user, resource.psid).type == 1:
             raise HTTPException(403, "Teaching IDE disabled for examinations")
         if body.task_type == "interview.advance":
@@ -506,6 +512,10 @@ def retry_job(task_id: str, body: RetryInput, user=Depends(active_user)):
             if json.loads(previous.payload).get("retry_of") != task_id:
                 raise HTTPException(409, "Retry operation conflict")
             return {"taskId": previous.id, "replay": True}
+        if row.task_type.startswith("ide."):
+            from auto_task.run_context import authorize_teaching_ide
+            from utilsTime import getNowTime
+            authorize_teaching_ide(s, principal(user), getNowTime())
         job = submit(s, user, row.task_type, payload, body.operation_key, resource)
         return {"taskId": job.id}
 

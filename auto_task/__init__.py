@@ -4,12 +4,15 @@ from importlib import import_module
 
 from .base import BaseAutoTask, TASK_REGISTRY, register_task
 from .constants import TASK_QUEUE_NAME
-from .worker import start_background_worker
 
-# Import builtin tasks so they register themselves with the registry.
-from . import code_similarity as _code_similarity  # noqa: F401
-from . import subjective_review as _subjective_review  # noqa: F401
-from . import summary_report as _summary_report  # noqa: F401
+def load_builtin_tasks():
+    for name in ("code_similarity", "subjective_review", "summary_report"):
+        import_module("." + name, __name__)
+
+
+def start_background_worker():
+    from .worker import start_background_worker as start
+    return start()
 
 _LAZY_IMPORTS = {
     "AutoTaskLLMClient": ("auto_task.llm_client", "AutoTaskLLMClient"),

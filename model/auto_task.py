@@ -64,8 +64,7 @@ class autoTaskModel(dbSession):
             })
             task_ids.append(task_id)
 
-        self.session.commit()
-        self._push_tasks(queue_payloads)
+        self._persist_durable_tasks(queue_payloads)
         return task_ids
 
     # ------------------------ task updates ------------------------
@@ -162,7 +161,7 @@ class autoTaskModel(dbSession):
     # ------------------------ task queries ------------------------
     def get_task_detail(self, task_id: str) -> Dict[str, Any]:
         record = self.session.query(AutoTaskRun).filter(
-            AutoTaskRun.id == task_id
+            AutoTaskRun.id == task_id, AutoTaskRun.status != "deleted"
         ).first()
         if record is None:
             raise HTTPException(status_code=404, detail="任务不存在")
@@ -189,7 +188,7 @@ class autoTaskModel(dbSession):
             status: Optional[str] = None,
             username: Optional[str] = None,
     ):
-        query = self.session.query(AutoTaskRun)
+        query = self.session.query(AutoTaskRun).filter(AutoTaskRun.status != "deleted")
         if psid is not None:
             query = query.filter(AutoTaskRun.psid == psid)
         if groupId is not None:
@@ -296,9 +295,7 @@ class autoTaskModel(dbSession):
         payload_data = self._get_payload_from_log(task_id)
         if payload_data is None:
             raise HTTPException(status_code=400, detail="任务缺少 payload 日志，无法重试")
-        (self.session.query(AutoTaskRunLog)
-         .filter(AutoTaskRunLog.task_id == task_id, AutoTaskRunLog.tag != "payload")
-         .delete())
+        self._append_log(task_id, "log", {"event": "rerun_requested"})
         record.status = "pending"
         record.start_time = None
         record.end_time = None
@@ -312,8 +309,7 @@ class autoTaskModel(dbSession):
             record.problemId = self._resolve_problemId(record.problemId, payload_data)
         if record.username is None:
             record.username = self._extract_username(payload_data)
-        self.session.commit()
-        self._push_tasks([
+        self._persist_durable_tasks([
             {
                 "task_id": task_id,
                 "type": record.task_type,
@@ -322,21 +318,52 @@ class autoTaskModel(dbSession):
         ])
         return task_id
 
+    def _persist_durable_tasks(self, tasks):
+        from auto_task.entities import TaskJob
+        from auto_task.store import NON_AI, account, assert_active, digest, dumps, notify
+        self.session.flush()
+        for item in tasks:
+            payload = item["payload"]
+            actor = payload.get("_actor", {}) if isinstance(payload, dict) else {}
+            subject = str(actor.get("userId") or payload.get("userId") or "")
+            if not subject.isdecimal() or int(subject) <= 0:
+                raise HTTPException(400, detail="Task must include a stable SDUOJ actor ID")
+            access = account(self.session, subject, actor.get("username"))
+            assert_active(access)
+            if access.balance < 0 and item["type"] not in NON_AI:
+                raise HTTPException(402, detail="Insufficient AI points")
+            old = self.session.query(TaskJob).filter_by(id=item["task_id"]).with_for_update().first()
+            if old:
+                if old.status == "running":
+                    raise HTTPException(409, detail="Cannot rerun an active task")
+                old.status, old.lease_token, old.attempt = "pending", None, 0
+                old.result, old.error = None, None
+                old.available_at, old.finished_at = datetime.utcnow(), None
+            else:
+                self.session.add(TaskJob(id=item["task_id"], owner_id=subject,
+                                         owner_username=actor.get("username") or subject, payer_id=subject,
+                                         operation_key="legacy:" + item["task_id"], task_type=item["type"],
+                                         payload=dumps(payload), input_hash=digest(payload), psid=self._resolve_psid(None, payload)))
+        self.session.commit()
+
+        notify()
+
     def delete_task(self, task_id: str) -> None:
-        self.session.query(AutoTaskRunLog).filter(
-            AutoTaskRunLog.task_id == task_id
-        ).delete()
-        deleted = self.session.query(AutoTaskRun).filter(
-            AutoTaskRun.id == task_id
-        ).delete()
-        if deleted == 0:
-            self.session.rollback()
+        from auto_task.entities import TaskJob
+        from auto_task.store import cancel
+        record = self.session.query(AutoTaskRun).filter_by(id=task_id).with_for_update().first()
+        if record is None or record.status == "deleted":
             raise HTTPException(status_code=404, detail="任务不存在")
+        job = self.session.query(TaskJob).filter_by(id=task_id).first()
+        if job:
+            cancel(self.session, job, "Task deleted")
+        record.status = "deleted"
+        self._append_log(task_id, "log", {"event": "deleted"})
         self.session.commit()
 
     def task_exists(self, task_id: str) -> bool:
         return self.session.query(AutoTaskRun.id).filter(
-            AutoTaskRun.id == task_id
+            AutoTaskRun.id == task_id, AutoTaskRun.status != "deleted"
         ).first() is not None
 
     # ------------------------ internal helpers ------------------------

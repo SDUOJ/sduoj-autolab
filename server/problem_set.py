@@ -101,6 +101,17 @@ async def public_info(
 
 
 # 新增接口：查询当前用户关联的 group 中，所有即将开始（1天内）或正在进行的题单
+@router.get("/quick_entries")
+async def quick_entries(SDUOJUserInfo=Depends(try_cover_header)):
+    if not SDUOJUserInfo.get("logged"):
+        return makeResponse({"running": [], "upcoming": []})
+    db = problemSetModel()
+    try:
+        return makeResponse(await db.ps_get_quick_entries(SDUOJUserInfo.get("groups", [])))
+    finally:
+        db.session.close()
+
+
 @router.get("/upcoming")
 async def upcoming(SDUOJUserInfo=Depends(try_cover_header)):
     # 未登录返回空
