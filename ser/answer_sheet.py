@@ -1,7 +1,8 @@
 from typing import Optional, Union, List
 
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel, Field, root_validator
+from pydantic import BaseModel, Field, root_validator, validator
+from typing_extensions import Literal
 
 from auth import cover_header, problem_set_user, problem_set_manager
 from sduojApi import getUserId
@@ -127,6 +128,7 @@ class judgeListType(page):
     hasJudge: Optional[int]
     # 验收题队列过滤，可选；提供时仅返回加入该队列的验收题(type=2)
     review_queue: Optional[str]
+    review_filter: Optional[Literal["ai", "pending", "any", "resolved"]] = None
 
 
 class routerTypeBaseWithUsername(routerTypeBase):
@@ -160,7 +162,7 @@ async def ser_judge_add(
         data: routerTypeBaseWithJudgeLog, SDUOJUserInfo=Depends(cover_header)
 ):
     problem_set_manager(data.psid, SDUOJUserInfo)
-    return data.dict()
+    return {**data.dict(), "judger": SDUOJUserInfo["username"]}
 
 
 async def ser_judge_info(
@@ -187,8 +189,29 @@ async def ser_judge_list(
         "psid": data.psid,
         "judgeLock": data.judgeLock,
         "hasJudge": data.hasJudge,
-        "review_queue": data.review_queue
+        "review_queue": data.review_queue,
+        "review_filter": data.review_filter,
     }
+
+
+class GradeReviewRequest(BaseModel):
+    router: routerTypeBase
+    reason: str = Field(..., min_length=1, max_length=2000)
+    grade_version: str = Field(..., min_length=64, max_length=64)
+
+    @validator("reason")
+    def nonblank_reason(cls, value):
+        if not value.strip():
+            raise ValueError("请填写复核理由")
+        return value.strip()
+
+    class Config:
+        extra = "forbid"
+
+
+async def ser_grade_review_request(data: GradeReviewRequest, user=Depends(cover_header)):
+    await problem_set_user(data.router.psid, user, data.router.gid, authOnly=True)
+    return data, user["username"]
 
 
 async def ser_problem_set_routerType(data: routerType,

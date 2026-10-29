@@ -291,7 +291,7 @@ def _complete_once(job_id, token, result, apply=None):
         if apply:
             result = apply(s, job, result)
         job.result, job.status, job.finished_at = dumps(result), "success", datetime.utcnow()
-        job.lease_token = None
+        job.lease_token, job.error = None, None
         s.query(AutoTaskRun).filter_by(id=job.id).update({"status": "success", "end_time": legacy_time(job.finished_at)})
         log(s, job.id, "result", result)
 

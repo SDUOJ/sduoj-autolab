@@ -202,7 +202,9 @@ class AiFileLink(Base):
     resource_id = Column(String(63), ForeignKey("auto_task_resource.id"), primary_key=True)
 
 
-TABLES = [TaskJob.__table__, AiAccount.__table__, AiLedger.__table__,
+from model.grade_review import SubjectiveGradeReview
+
+TABLES = [SubjectiveGradeReview.__table__, TaskJob.__table__, AiAccount.__table__, AiLedger.__table__,
           AiResource.__table__, AiReview.__table__, AiSetting.__table__,
           AiRun.__table__, AiFile.__table__, AiFileLink.__table__, TaskInput.__table__, AiRevision.__table__,
           AiPlagiarismSnapshot.__table__, AiPlagiarismSubmission.__table__]

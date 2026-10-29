@@ -235,13 +235,16 @@ def test_worker_authorizes_before_handling_and_before_completion(database, monke
 
 def test_budget_reservations_prevent_concurrent_scope_overspend(database):
     from auto_task.accounting import begin_run
+    from db import ojCourse
     config = model_config().copy(update={"monthly_course_budget_usd": 0.025})
     with store.transaction() as s:
+        s.add(ojCourse(course_id=123, course_name="Budget fixture", group_id=10,
+                       tag="fixture", creator_username="teacher"))
         first = resource(s, "42")
-        second = resource(s, "7")
+        second = resource(s, "7", owner_username="teacher")
         first.course_id = second.course_id = 123
-        store.submit(s, USER, "question.solve", {}, "first", first)
-        store.submit(s, ADMIN, "question.solve", {}, "second", second)
+        store.submit(s, USER, "question.extract", {}, "first", first)
+        store.submit(s, ADMIN, "question.extract", {}, "second", second)
     a, b = store.claim(), store.claim()
     assert a and b
     begin_run(a, config)

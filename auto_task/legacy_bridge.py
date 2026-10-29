@@ -1,11 +1,11 @@
-"""Keep existing task IDs/DTOs while replacing execution and protecting manual grades."""
+"""Keep native automatic grade writeback and allow later teacher corrections."""
 
 import json
 
 from db import ProblemSetAnswerSheet, ProblemSetAnswerSheetDetail, ProblemSubjective
 from ser.auto_task_ai import Grade
 from .entities import AiResource, uid
-from .store import digest, dumps, transaction
+from .store import digest, dumps, log, transaction
 
 
 def answer_snapshot(session, psid, gid, pid, username):
@@ -21,11 +21,51 @@ def answer_snapshot(session, psid, gid, pid, username):
                     "input_hash": digest({"question": question.description, "answer": detail.answer, "rubric": config.get("judgeConfig", [])})}
 
 
+def writeback_subjective_result(session, job, value):
+    """Write a verified task result atomically, without replacing later edits."""
+    if value.get("written_back"):
+        return value
+    if job.task_type != "subjective_review":
+        raise ValueError("Expected native subjective review task")
+    source = value["source"]
+    payload = json.loads(job.payload)
+    if any(source[key] != payload[key] for key in ("psid", "gid", "pid", "username")):
+        raise ValueError("Native grading source does not match task")
+    detail = (session.query(ProblemSetAnswerSheetDetail)
+              .filter_by(asd_id=source["asd_id"]).with_for_update().one())
+    _, current = answer_snapshot(session, source["psid"], source["gid"], source["pid"], source["username"])
+    if current["input_hash"] != source["input_hash"] or current["grade_hash"] != source["grade_hash"]:
+        raise ValueError("Native answer/rubric/grade changed during model execution")
+    if detail.judgeLog and json.loads(detail.judgeLog) and detail.judgeLock_username not in (None, "<AUTO>"):
+        raise ValueError("Existing manual grade must be preserved")
+    evaluation = Grade.parse_obj(value["evaluation"])
+    expected = [(item.get("name"), float(item.get("score", 0))) for item in current["rubric"]]
+    if expected != [(item.name, item.max_score) for item in evaluation.criteria]:
+        raise ValueError("Rubric mismatch")
+    judge_log = [{"name": item.name, "score": item.max_score, "jScore": item.score}
+                 for item in evaluation.criteria]
+    if judge_log != value["judgeLog"] or evaluation.summary != value["judgeComment"]:
+        raise ValueError("Native grade differs from validated model result")
+    before = {"judgeLog": detail.judgeLog, "judgeComment": detail.judgeComment,
+              "judgeLock_username": detail.judgeLock_username}
+    detail.judgeLog = dumps(judge_log)
+    detail.judgeComment = evaluation.summary
+    detail.judgeLock_username = "<AUTO>"
+    from model.grade_review import record_ai_review
+    record_ai_review(session, detail, evaluation, job.id)
+    log(session, job.id, "log", {"event": "native_grade_auto_written_back",
+        "asd_id": detail.asd_id, "before": before, "after": judge_log})
+    return {**value, "candidate": False, "written_back": True}
+
+
 def subjective(ctx):
     from .handlers import ask
     payload = json.loads(ctx.job["payload"])
     with transaction() as s:
-        _, source = answer_snapshot(s, payload["psid"], payload["gid"], payload["pid"], payload["username"])
+        detail, source = answer_snapshot(s, payload["psid"], payload["gid"], payload["pid"], payload["username"])
+        if detail.judgeLog and json.loads(detail.judgeLog) and detail.judgeLock_username not in (None, "<AUTO>"):
+            return {"judgeLog": json.loads(detail.judgeLog), "judgeComment": detail.judgeComment or "",
+                    "candidate": False, "written_back": False, "skipped": "manual_grade_exists"}, None
     saved = ctx.job.get("input_snapshot", {}).get("data", {}).get("native_source")
     if saved:
         if source["input_hash"] != saved["input_hash"] or source["grade_hash"] != saved["grade_hash"]:
@@ -52,14 +92,22 @@ def subjective(ctx):
     finally:
         service.answer_model.session.close()
         service.subject_model.session.close()
-    if [(item.get("name"), float(item.get("score", 0))) for item in source["rubric"]] != [(item["name"], item["max_score"]) for item in result["criteria"]]:
+    expected = [(item.get("name"), float(item.get("score", 0))) for item in source["rubric"]]
+    actual = [(item["name"], item["max_score"]) for item in result["criteria"]]
+    if expected != actual:
+        from .store import log
+        with transaction() as s:
+            from .store import fenced
+            fenced(s, ctx.job["id"], ctx.job["lease_token"])
+            log(s, ctx.job["id"], "log", {
+                "event": "grade_rubric_mismatch",
+                "expected_criteria": expected,
+                "actual_criteria": actual,
+            })
         raise ValueError("Rubric mismatch")
     legacy = {"judgeLog": [{"name": item["name"], "score": item["max_score"], "jScore": item["score"]} for item in result["criteria"]],
               "judgeComment": result["summary"], "candidate": True, "source": source, "evaluation": result}
     def apply(session, job, value):
-        _, current = answer_snapshot(session, payload["psid"], payload["gid"], payload["pid"], payload["username"])
-        if current["input_hash"] != source["input_hash"] or current["grade_hash"] != source["grade_hash"]:
-            raise ValueError("Native answer/rubric/grade changed during model execution")
         session.info.update(ai_actor=job.owner_id, ai_task=job.id)
         if job.resource_id:
             row = session.query(AiResource).filter_by(id=job.resource_id, deleted=0).with_for_update().one()
@@ -69,7 +117,9 @@ def subjective(ctx):
         else:
             row = AiResource(id=uid(), kind="grading", owner_id=job.owner_id, owner_username=job.owner_username, psid=job.psid)
             session.add(row)
-        row.state, row.data = "review", dumps({"candidate": value, "candidate_job_id": job.id})
+        value = writeback_subjective_result(session, job, value)
+        row.state, row.data = "adopted", dumps({"candidate": value, "candidate_job_id": job.id,
+                                              "native_writeback": {"automatic": True, "task_id": job.id}})
         job.resource_id = row.id
         return {**value, "resource_id": row.id}
     return legacy, apply

@@ -60,7 +60,7 @@ class ProviderConfig(BaseModel):
 
     @validator("provider")
     def provider_supported(cls, value):
-        if value not in ("codex", "chat_completions"):
+        if value not in ("codex", "chat_completions", "responses"):
             raise ValueError("Unsupported provider")
         return value
 
@@ -75,7 +75,19 @@ class ProviderConfig(BaseModel):
                 loopback = ipaddress.ip_address(url.hostname).is_loopback
             except ValueError:
                 loopback = url.hostname.lower() == "localhost"
-            if MOD != "debug" or not loopback:
+            origin = (url.scheme + "://" + url.netloc).lower()
+            trusted_origins = {
+                item.strip().rstrip("/").lower()
+                for item in os.environ.get("AUTOLAB_AI_TRUSTED_HTTP_PROVIDER_ORIGINS", "").split(",")
+                if item.strip()
+            }
+            local_debug = MOD == "debug" and loopback
+            approved_release_gateway = (
+                MOD == "release"
+                and origin in trusted_origins
+                and url.path.rstrip("/") in ("", "/v1")
+            )
+            if not (local_debug or approved_release_gateway):
                 raise ValueError("Provider API must use HTTPS unless it is loopback development")
         return value.rstrip("/")
 

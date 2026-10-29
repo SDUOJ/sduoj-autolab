@@ -15,7 +15,10 @@ NOW = 2_000_000_000_000
 
 
 @pytest.fixture
-def context(database):
+def context(database, monkeypatch):
+    from server import ide_context_dependencies
+    monkeypatch.setattr(api, "transaction", store.transaction)
+    monkeypatch.setattr(ide_context_dependencies, "transaction", store.transaction)
     with store.transaction() as s:
         s.add(ProblemGroup(gid=1, name="native", type=2, problemInfo='[{"pid":123}]', username="teacher"))
         s.add(ProblemSet(psid=1, name="timed", type=1, groupId=10, username="teacher", tag="exam",

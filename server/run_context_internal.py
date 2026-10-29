@@ -3,9 +3,9 @@
 import secrets
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, conint
-from auto_task.access import fetch_actor
+from starlette.concurrency import run_in_threadpool
+from server.ide_context_dependencies import fetch_actor, transaction
 from auto_task.run_context import check_native_context
-from auto_task.store import transaction
 from const import SDUOJ_TOKEN
 from utilsTime import getNowTime
 
@@ -73,7 +73,10 @@ async def ide_context(body: IdeSubject, request: Request):
     if (not SDUOJ_TOKEN or len(tokens) != 1
             or not secrets.compare_digest(tokens[0].encode(), SDUOJ_TOKEN.encode())):
         raise HTTPException(403, "Internal credentials required")
-    actor = fetch_actor(str(body.userId), fresh=True)
+    try:
+        actor = await run_in_threadpool(fetch_actor, str(body.userId), fresh=True)
+    except Exception as error:
+        raise HTTPException(503, "IDE subject unavailable") from error
     if int(actor["userId"]) != body.userId or not set(actor["roles"]).intersection({"user", "admin", "superadmin"}):
         raise HTTPException(403, "IDE permission denied")
     address = body.context

@@ -12,13 +12,44 @@ from ser.answer_sheet import routerType, \
     ser_problem_set_routerType, routerTypeWithUsername, routerTypeWithData, \
     ser_problem_set_with_data, submissionListType, ser_submission_List, \
     ser_submission_info, submissionInfo, routerTypeBase, pbcp_deal, \
-    ser_psid_only, ser_subjective_export
+    ser_psid_only, ser_subjective_export, ser_grade_review_request
 from utils import makeResponse, get_random_list_by_str, get_group_hash_name, \
     deal_order_change
 
 router = APIRouter(
     prefix="/answer_sheet"
 )
+
+
+@router.post("/gradeReview")
+async def grade_review(data=Depends(ser_grade_review_request)):
+    from db import ProblemSetAnswerSheet, ProblemSetAnswerSheetDetail
+    from model.grade_review import request_review
+    from ser.answer_sheet import routerTypeWithUsername
+    body, username = data
+    db = answerSheetModel()
+    try:
+        route = routerTypeWithUsername(router=body.router, username=username)
+        await deal_order_change(db, route)
+        config = await db.ps_get_config_by_psid_cache(route.router.psid)
+        if not config.get("showSubjectiveJudgeLog"):
+            raise HTTPException(403, "当前不开放主观题评分查看")
+        gid, pid = await db.get_gid_pid_by_psid_gi_pi_cache(route.router.psid, route.router.gid, route.router.pid)
+        detail = (db.session.query(ProblemSetAnswerSheetDetail).join(ProblemSetAnswerSheet)
+                  .filter(ProblemSetAnswerSheet.psid == route.router.psid,
+                          ProblemSetAnswerSheet.username == username,
+                          ProblemSetAnswerSheetDetail.gid == gid,
+                          ProblemSetAnswerSheetDetail.pid == pid).with_for_update().first())
+        if detail is None:
+            raise HTTPException(404, "答题记录不存在")
+        result = request_review(db.session, detail, username, body.reason, body.grade_version)
+        db.session.commit()
+        return makeResponse(result)
+    except Exception:
+        db.session.rollback()
+        raise
+    finally:
+        db.session.close()
 
 
 # ############### 答题 ###################################

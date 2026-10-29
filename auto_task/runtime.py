@@ -23,6 +23,12 @@ SYSTEM = "You are Autolab's mathematics/computer-science teaching assistant. All
 ACTIVE_CONTEXT = ContextVar("autolab_ai_context", default=None)
 
 
+class ProviderHTTPError(RuntimeError):
+    def __init__(self, status_code, endpoint):
+        self.status_code = status_code
+        super().__init__("Model provider returned HTTP {} ({})".format(status_code, endpoint))
+
+
 def run_process(args, cwd, check, timeout, stdin=None, env=None, max_output=2 * 1024 * 1024, allow_nonzero=False, on_output=None, separate_stderr=False):
     process = subprocess.Popen(args, cwd=str(cwd), env=env, stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE if separate_stderr else subprocess.STDOUT, start_new_session=True)
@@ -122,13 +128,29 @@ class Context:
         directory.mkdir(parents=True, mode=0o700)
         usage, thread, status = {}, None, "failed"
         self.observed_usage = {}
+        self.stream_diagnostics = {}
         try:
             if config.provider == "codex":
                 result, usage, thread = self._codex(config, key, directory, prompt, schema, images)
+            elif config.provider == "responses":
+                result, usage = self._responses(config, key, prompt, schema, images)
             else:
                 result, usage = self._http(config, key, prompt, schema, images)
             status = "success"
             return result
+        except Exception as error:
+            if config.provider == "responses":
+                try:
+                    with transaction() as session:
+                        fenced(session, self.job["id"], self.job["lease_token"])
+                        log(session, self.job["id"], "log", {
+                            "event": "model_request_failed", "provider": "responses",
+                            "error_type": type(error).__name__,
+                            "stream": self.stream_diagnostics,
+                        })
+                except Exception:
+                    pass
+            raise
         finally:
             usage = usage or self.observed_usage
             settle_run(run_id, usage, status, thread)
@@ -208,6 +230,109 @@ class Context:
             session_path.write_text(dumps(sessions), encoding="utf8")
         return result, usage, thread
 
+    def _responses(self, config, key, prompt, schema, images):
+        self.stream_diagnostics = {"event_types": [], "text_delta_chars": 0, "response_status": None}
+        # Compatible gateways may ignore text.format/instructions. Include the
+        # contract in the model-visible input as well, rather than accepting prose
+        # as a grading result.
+        structured_prompt = ("Return exactly one JSON object matching the JSON Schema below. "
+                             "Do not use Markdown fences or add explanations outside the JSON.\n"
+                             "JSON Schema:\n" + dumps(schema) + "\n\nTask:\n" + prompt)
+        parts = [{"type": "input_text", "text": structured_prompt}]
+        for image in images:
+            import mimetypes
+            mime = mimetypes.guess_type(str(image))[0] or "image/png"
+            encoded = base64.b64encode(image.read_bytes()).decode("ascii")
+            parts.append({"type": "input_image", "image_url": "data:{};base64,{}".format(mime, encoded)})
+        response = requests.post(
+            config.base_url + "/responses",
+            headers={"Authorization": "Bearer " + key},
+            json={"model": config.model, "instructions": SYSTEM,
+                  "input": [{"role": "user", "content": parts}],
+                  "store": False, "stream": True,
+                  "max_output_tokens": config.max_output_tokens,
+                  "reasoning": {"effort": config.reasoning_effort},
+                  "text": {"format": {"type": "json_schema", "name": "autolab_result", "strict": True, "schema": schema}}},
+            timeout=(10, config.timeout_seconds),
+            allow_redirects=False,
+            stream=True,
+        )
+        if not response.ok:
+            response.close()
+            raise ProviderHTTPError(response.status_code, "Responses")
+        # SSE is UTF-8 by specification; some compatible gateways omit a
+        # charset, which makes requests default to ISO-8859-1 and corrupt CJK.
+        response.encoding = "utf-8"
+        text_parts, completed_text, usage, status, refusal = [], [], {}, None, False
+        diagnostics = self.stream_diagnostics
+        self.stream_diagnostics = diagnostics
+        self.observed_usage = {}
+        try:
+            for line in response.iter_lines(decode_unicode=True):
+                if not line or not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    event = json.loads(payload)
+                except ValueError:
+                    continue
+                event_type = event.get("type")
+                if event_type and event_type not in diagnostics["event_types"] and len(diagnostics["event_types"]) < 24:
+                    diagnostics["event_types"].append(event_type)
+                if event_type == "response.output_text.delta":
+                    delta = event.get("delta", "")
+                    text_parts.append(delta)
+                    diagnostics["text_delta_chars"] += len(delta)
+                elif event_type == "response.output_text.done" and not text_parts:
+                    text_parts.append(event.get("text", ""))
+                elif event_type == "response.completed":
+                    completed = event.get("response", event)
+                    status = completed.get("status")
+                    diagnostics["response_status"] = status
+                    usage = completed.get("usage") or {}
+                    for item in completed.get("output", []):
+                        if item.get("type") != "message":
+                            continue
+                        for part in item.get("content", []):
+                            if part.get("type") == "refusal":
+                                refusal = True
+                            elif part.get("type") == "output_text":
+                                completed_text.append(part.get("text", ""))
+                elif event_type in ("response.failed", "response.incomplete", "error"):
+                    failed = event.get("response", event)
+                    self.observed_usage = failed.get("usage") or event.get("usage") or {}
+                    diagnostics["response_status"] = failed.get("status")
+                    if event_type == "response.incomplete":
+                        raise ValueError("Model response did not complete")
+                    if event_type == "response.failed":
+                        raise ValueError("Model response failed")
+                    raise ValueError("Model response stream returned an error")
+                elif event_type == "response.refusal.delta":
+                    refusal = True
+        finally:
+            response.close()
+        if "cached_tokens" in (usage.get("input_tokens_details") or {}):
+            usage = {**usage, "cached_input_tokens": usage["input_tokens_details"]["cached_tokens"]}
+        self.observed_usage = usage
+        if status != "completed":
+            if status is not None:
+                raise ValueError("Model response did not complete")
+            diagnostics["accepted_eof_json"] = False
+        if refusal:
+            raise ValueError("Model refused the request")
+        text = "".join(text_parts or completed_text)
+        if not text or len(text.encode("utf8")) > 2 * 1024 * 1024:
+            raise ValueError("Model did not produce a bounded structured result")
+        try:
+            value = json.loads(text)
+            if status is None:
+                diagnostics["accepted_eof_json"] = True
+            return value, usage
+        except json.JSONDecodeError as error:
+            raise ValueError("Model response did not contain valid JSON (Responses)") from error
+
     def _http(self, config, key, prompt, schema, images):
         parts = [{"type": "text", "text": prompt}]
         for image in images:
@@ -224,7 +349,7 @@ class Context:
                                  timeout=(10, min(45, config.timeout_seconds)),
                                  allow_redirects=False)
         if not response.ok:
-            raise RuntimeError("Model provider returned HTTP {}".format(response.status_code))
+            raise ProviderHTTPError(response.status_code, "Chat Completions")
         value = response.json()
         self.observed_usage = value.get("usage") or {}
         return json.loads(value["choices"][0]["message"]["content"]), value.get("usage") or {}
