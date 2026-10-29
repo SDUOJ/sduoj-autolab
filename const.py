@@ -1,5 +1,6 @@
 import base64
 import os
+from urllib.parse import urlsplit
 
 MOD = os.environ.get("SDUOJ_MODE", "debug").lower()
 if MOD == "dev":
@@ -7,7 +8,16 @@ if MOD == "dev":
 if MOD not in ("debug", "release"):
     raise ValueError("SDUOJ_MODE must be debug, dev or release")
 
-PUBLIC_OJ_BASE_URL = "http://api.test.sduoj.com:8080" if MOD == "debug" else "https://oj.qd.sdu.edu.cn"
+PUBLIC_OJ_BASE_URL = os.environ.get("AUTOLAB_PUBLIC_OJ_BASE_URL",
+    "http://api.test.sduoj.com:8080" if MOD == "debug" else "https://oj.qd.sdu.edu.cn")
+_public_origin = urlsplit(PUBLIC_OJ_BASE_URL)
+if (PUBLIC_OJ_BASE_URL != PUBLIC_OJ_BASE_URL.strip() or
+        _public_origin.scheme not in ("http", "https") or not _public_origin.hostname or
+        _public_origin.username or _public_origin.password or
+        _public_origin.path not in ("", "/") or _public_origin.query or _public_origin.fragment):
+    raise ValueError("AUTOLAB_PUBLIC_OJ_BASE_URL must be an HTTP(S) origin")
+_public_origin.port  # Reject a malformed port before any client builds URLs.
+PUBLIC_OJ_BASE_URL = PUBLIC_OJ_BASE_URL.rstrip("/")
 
 
 def required_release_setting(name):

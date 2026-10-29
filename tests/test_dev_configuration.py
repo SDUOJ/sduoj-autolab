@@ -1,5 +1,8 @@
 import asyncio
 import importlib
+import os
+import subprocess
+import sys
 
 import pytest
 
@@ -63,3 +66,26 @@ def test_release_keeps_nacos_discovery(dev_api, monkeypatch):
 
     monkeypatch.setattr(dev_api.requests, "get", lambda *args, **kwargs: Response())
     assert asyncio.run(dev_api.getService_ip_port("filesys-service")) == "192.0.2.10:8080"
+
+
+@pytest.mark.parametrize("origin", ["http://gateway:8080/", "https://staging.example.test"])
+def test_release_public_links_use_the_selected_origin(origin):
+    env = dict(os.environ, SDUOJ_MODE="release", SDUOJ_TOKEN="fixture-token",
+               AUTOLAB_MYSQL_PASSWORD="fixture-db", AUTOLAB_REDIS_PASSWORD="fixture-cache",
+               AUTOLAB_AI_SECRET_KEY="eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg=",
+               AUTOLAB_PUBLIC_OJ_BASE_URL=origin)
+    result = subprocess.run([sys.executable, "-c", "import const; print(const.PUBLIC_OJ_BASE_URL)"],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == origin.rstrip("/")
+
+
+@pytest.mark.parametrize("origin", ["", "file:///tmp/oj", "https://user:pass@example.test",
+                                  "https://example.test/path", "https://example.test/?query=1",
+                                  "https://example.test/#fragment", " https://example.test",
+                                  "https://example.test:bad"])
+def test_public_origin_rejects_credentials_paths_and_invalid_targets(origin):
+    result = subprocess.run([sys.executable, "-c", "import const"],
+                            env=dict(os.environ, AUTOLAB_PUBLIC_OJ_BASE_URL=origin),
+                            capture_output=True, text=True)
+    assert result.returncode != 0
