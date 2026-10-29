@@ -1,5 +1,28 @@
 -- Review-only MySQL 8 schema. Use python -m auto_task.migrate --apply for idempotent application.
 
+CREATE TABLE IF NOT EXISTS subjective_grade_review (
+	asd_id INTEGER NOT NULL, 
+	grade_version VARCHAR(64) NOT NULL, 
+	ai_needs_review INTEGER NOT NULL, 
+	ai_reason TEXT, 
+	task_id VARCHAR(63), 
+	status VARCHAR(16) NOT NULL, 
+	reviewer_id VARCHAR(63), 
+	reviewer_until DATETIME, 
+	reason TEXT, 
+	requested_by VARCHAR(63), 
+	requested_at DATETIME, 
+	resolved_by VARCHAR(63), 
+	resolved_at DATETIME, 
+	history TEXT NOT NULL, 
+	PRIMARY KEY (asd_id), 
+	FOREIGN KEY(asd_id) REFERENCES problem_set_answer_sheet_detail (asd_id)
+);
+
+CREATE INDEX ix_subjective_grade_review_ai_needs_review ON subjective_grade_review (ai_needs_review);
+
+CREATE INDEX ix_subjective_grade_review_status ON subjective_grade_review (status);
+
 CREATE TABLE IF NOT EXISTS auto_task_job (
 	id VARCHAR(63) NOT NULL, 
 	owner_id VARCHAR(64) NOT NULL, 
