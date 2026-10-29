@@ -19,6 +19,16 @@ def _creation_tables(engine, existing):
     metadata = MetaData()
     originals = [AutoTaskRun.__table__, AutoTaskRunLog.__table__, *TABLES]
     tables = [table.to_metadata(metadata) for table in originals]
+    # Resolve FKs through existing native tables in this private metadata graph.
+    # Only `tables` below are migration targets; referenced parents are not added
+    # to the create list and their schema is never changed by this migration.
+    pending = list(originals)
+    while pending:
+        for foreign_key in pending.pop().foreign_keys:
+            parent = foreign_key.column.table
+            if parent.key not in metadata.tables:
+                parent.to_metadata(metadata)
+                pending.append(parent)
     inherited, conflicts = [], []
     if engine.dialect.name != "mysql":
         return tables, inherited, conflicts

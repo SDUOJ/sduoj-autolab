@@ -7,10 +7,10 @@ from sqlalchemy.engine.url import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
-from db import AutoTaskRun, AutoTaskRunLog
+from db import AutoTaskRun, AutoTaskRunLog, ProblemSet, ProblemSetAnswerSheet, ProblemSetAnswerSheetDetail
 from auto_task import store
 from auto_task.entities import AiRun, TABLES, TaskInput, TaskJob
-from auto_task.migrate import migrate
+from auto_task.migrate import _creation_tables, migrate
 
 
 @pytest.fixture
@@ -22,14 +22,19 @@ def upgrade_database(monkeypatch):
     assert url.host in ("127.0.0.1", "localhost") and url.database == "autolab_ai_test"
     engine = create_engine(value)
     assert engine.dialect.name == "mysql"
-    metadata = MetaData()
-    for table in [AutoTaskRun.__table__, AutoTaskRunLog.__table__, *TABLES]:
-        table.to_metadata(metadata)
-    metadata.drop_all(engine)
+    targets, _, _ = _creation_tables(engine, set())
+    metadata = targets[0].metadata
+    metadata.drop_all(engine, tables=targets)
+    # Native answer tables are fixture prerequisites, not AI migration targets.
+    native = MetaData()
+    for table in [ProblemSet.__table__, ProblemSetAnswerSheet.__table__, ProblemSetAnswerSheetDetail.__table__]:
+        table.to_metadata(native)
+    native.create_all(engine)
     monkeypatch.setattr(store, "_factory", sessionmaker(bind=engine, expire_on_commit=False))
     monkeypatch.setenv("AUTOLAB_AI_WAKE", "0")
     yield engine
-    metadata.drop_all(engine)
+    metadata.drop_all(engine, tables=targets)
+    native.drop_all(engine)
     engine.dispose()
 
 
